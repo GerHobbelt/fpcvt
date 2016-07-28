@@ -3,15 +3,15 @@
 
 
 // See also:
-// 
-//   - https://docs.oracle.com/cd/E19957-01/806-3568/ncg_goldberg.html 
+//
+//   - https://docs.oracle.com/cd/E19957-01/806-3568/ncg_goldberg.html
 //     + https://ece.uwaterloo.ca/~dwharder/NumericalAnalysis/02Numerics/Double/paper.pdf
 //     + http://perso.ens-lyon.fr/jean-michel.muller/goldberg.pdf
 //   - http://steve.hollasch.net/cgindex/coding/ieeefloat.html
 //   - https://en.wikipedia.org/wiki/IEEE_floating_point
 //   - https://www.cs.umd.edu/class/sum2003/cmsc311/Notes/Data/float.html
 //   - https://www.doc.ic.ac.uk/~eedwards/compsys/float/
-//     
+//
 
 
 
@@ -90,19 +90,19 @@ function encode_fp_value(flt) {
   // sequences (the extra Unicode pages are triggered by a set of codes in the upper range
   // which we cannot create this way, so no unicode verifiers will ever catch us for being
   // illegal now!)
-  // 
+  //
   // WARNING: the exponent is not exactly 12 bits when you look at the Math.log2()
   //          output, as there are these near-zero values to consider up to exponent
   //          -1074 (-1074 + 52 = -1022 ;-) ) a.k.a. "denormalized zeroes":
-  //          
+  //
   //              Math.log2(Math.pow(2,-1074)) === -1074
   //              Math.log2(Math.pow(2,-1075)) === -Infinity
-  //              
+  //
   //              Math.pow(2,1023) * Math.pow(2,-1073) === 8.881784197001252e-16
   //              Math.pow(2,1023) * Math.pow(2,-1074) === 4.440892098500626e-16
   //              Math.pow(2,1023) * Math.pow(2,-1075) === 0
   //              Math.pow(2,1023) * Math.pow(2,-1076) === 0
-  //              
+  //
 
   if (!flt) {
     // +0, -0 or NaN:
@@ -116,7 +116,7 @@ function encode_fp_value(flt) {
       } else {
         return String.fromCharCode(FPC_ENC_POSITIVE_ZERO);
       }
-    }   
+    }
   } else if (isFinite(flt)) {
     // encode sign in bit 12
     var s;
@@ -126,7 +126,7 @@ function encode_fp_value(flt) {
     } else {
       s = 0;
     }
-    
+
     // extract power from fp value    (WARNING: MSIE does not support log2(), see MDN!)
     var exp2 = Math.log2(flt);
     var p = exp2 | 0;  // --> +1023..-1024, pardon!, -1074 (!!!)
@@ -140,9 +140,9 @@ function encode_fp_value(flt) {
       // We encode a certain range and type of values specially as that will deliver shorter Unicode
       // sequences: 'human' values like `4200` and `0.125` (1/8th) are almost always
       // not encoded *exactly* in IEE754 floats due to their base(2) storage nature.
-      // 
+      //
       // Here we detect quickly if the mantissa would span at most 3 decimal digits
-      // and the exponent happens to be within reasonable range: when this is the 
+      // and the exponent happens to be within reasonable range: when this is the
       // case, we encode them as a *decimal short float* in 13 bits, which happen
       // to fit snugly in the unicode word range 0x8000..0xC000 or in a larger
       // *decimal float* which spans two words: 13+15 bits.
@@ -166,7 +166,7 @@ function encode_fp_value(flt) {
         // *short* decimal floats take 13-14 bits (10+~4) at 0x8000..0xCFFF as
         // short floats have exponent -3..+5 in $1000 0sxx .. $1100 1sxx:
         // --> 0x10..0x19 minus 0x10 --> [0x00..0x09] --> 10(!) exponent values.
-        // 
+        //
         // As we want to be able to store 'millions' (1E6) like that, our positive
         // range should reach +6, which leaves -3 (don't forget about the 0!);
         // we also want to support *milli* values (exponent = -3) which is
@@ -176,8 +176,8 @@ function encode_fp_value(flt) {
         if (dp >= 0 && dp <= 0x09 /* && dy < 1024 */) {
           // short float eligible value for sure!
           var dc;
-                            
-          // 
+
+          //
           // Bits in word:
           // - 0..9: integer mantissa; values 0..1023
           // - 10: sign
@@ -185,14 +185,14 @@ function encode_fp_value(flt) {
           // - 15: set to signal special values; this bit is also set for some special Unicode characters,
           //       so we can only set this bit and have particular values in bits 0..14 at the same time
           //       in order to prevent a collision with those Unicode specials at 0xD800..0xDFFF.
-          //        
+          //
           // alt:                    __(!!s << 10)_   _dy_____
           dc = 0x8000 + (dp << 11) + (s ? 1024 : 0) + (dy | 0);                  // the `| 0` shouldn't be necessary but is there as a precaution
           //console.log('d10-dbg', dp, dy, s, '0x' + dc.toString(16), flt);
           return String.fromCharCode(dc);
         }
       }
-    }                                 
+    }
 
     // and produce the mantissa so that it's range now is [0..2>: for powers > 0
     // the value y will be >= 1 while for negative powers, i.e. tiny numbers, the
@@ -211,7 +211,7 @@ function encode_fp_value(flt) {
     if (b === 0) {
       throw new Error('fp encoding: ZERO mantissa');
     }
-                      
+
     // and show the unicode character codes for debugging/diagnostics:
     //var dbg = [0 /* Note: this slot will be *correctly* filled at the end */];
     //console.log('dbg @ start', 0, p + 1024 + s, flt, dbg, s, p, y, b);
@@ -228,9 +228,9 @@ function encode_fp_value(flt) {
       b = d;
     }
 
-    // encode sign + power + mantissa length in a Unicode char 
+    // encode sign + power + mantissa length in a Unicode char
     // (i E {0..4} as maximum size FPC_ENC_MAXLEN=4 ==> 3 bits of length @ bits 13.14.15 in word)
-    // 
+    //
     // Bits in word:
     // - 0..11: exponent; values -1024..+1023 with an offset of 1024 to make them all positive numbers
     // - 12: sign
@@ -238,14 +238,14 @@ function encode_fp_value(flt) {
     // - 15: set to signal special values; this bit is also set for some special Unicode characters,
     //       so we can only set this bit and have particular values in bits 0..14 at the same time
     //       in order to prevent a collision with those Unicode specials at 0xD800..0xDFFF.
-    //        
+    //
     // Special values (with bit 15 set):
     // - +Inf
     // - -Inf
     // - NaN
     // - -0    (negative zero)
     // - +0    (positive zero)
-    // 
+    //
     --i;
     if (i > 3) {
       throw new Error('fp encode length too large');
@@ -297,7 +297,7 @@ function decode_fp_value(s, opt) {
 
   var c0 = s.charCodeAt(0);
   //console.log('decode task: ', s, s.length, c0, '0x' + c0.toString(16));
-  
+
   // As we expect most encodings to be regular numbers, those will be in 0x0000..0x7FFF and
   // we don't want to spend the least amount of time in the 'special values' overhead,
   // which would be added overhead if we did check for those *first* instead of at the *same time*
@@ -332,7 +332,7 @@ function decode_fp_value(s, opt) {
   case 0xB000:
   case 0xC000:
     // 'human values' encoded as 'short floats':
-    // 
+    //
     // Bits in word:
     // - 0..9: integer mantissa; values 0..1023
     // - 10: sign
@@ -340,7 +340,7 @@ function decode_fp_value(s, opt) {
     // - 15: set to signal special values; this bit is also set for some special Unicode characters,
     //       so we can only set this bit and have particular values in bits 0..14 at the same time
     //       in order to prevent a collision with those Unicode specials at 0xD800..0xDFFF.
-    //        
+    //
     var dm = c0 & 0x03FF;      // 10 bits
     var ds = c0 & 0x0400;      // bit 10 = sign
     var dp = c0 & 0x7800;      // bits 11..14: exponent
@@ -349,25 +349,25 @@ function decode_fp_value(s, opt) {
     dp >>>= 11;
     dp -= 3 + 2;
 
-    var sflt = dm * Math.pow(10, dp);                                 
+    var sflt = dm * Math.pow(10, dp);
     if (ds) {
       sflt = -sflt;
     }
     //console.log('decode-short-1', sflt, ds, dm, dp, c0, '0x' + c0.toString(16));
     return sflt;
-     
+
   case 0xD000:
     throw new Error('illegal fp encoding value in 0xDXXX unicode range');
 
   default:
     // 'regular' floating point values:
-    // 
+    //
     // Bits in word:
     // - 0..11: exponent; values -1024..+1023 with an offset of 1024 to make them all positive numbers
     // - 12: sign
     // - 13,14: length 1..4: the number of words following to define the mantissa
     // - 15: 0 (zero)
-    //   
+    //
     var len = c0 & 0x6000;
     var vs = c0 & 0x1000;
     var p = c0 & 0x0FFF;
@@ -398,12 +398,12 @@ function decode_fp_value(s, opt) {
       opt.consumed_length += 2;
       //console.log('decode-normal-len=2', m, s.charCodeAt(1), s.charCodeAt(2));
       break;
-      
+
     case 0x4000:
       // 3 more 15-bit words: WARNING: this doesn't fit in an *integer* of 31 bits any more,
       // so we'll have to use floating point for at least one intermediate step!
-      // 
-      // Oh, by the way, did you notice we use a Big Endian type encoding mechanism?  :-) 
+      //
+      // Oh, by the way, did you notice we use a Big Endian type encoding mechanism?  :-)
       im = s.charCodeAt(1);
       m = im / FPC_ENC_MODULO;
       im = s.charCodeAt(2);
@@ -413,12 +413,12 @@ function decode_fp_value(s, opt) {
       opt.consumed_length += 3;
       //console.log('decode-normal-len=3', m, s.charCodeAt(1), s.charCodeAt(2), s.charCodeAt(3));
       break;
-      
+
     case 0x6000:
-      // 4 more 15-bit words, where the last one doesn't use all bits. We don't use 
-      // those surplus bits yet, so we're good to go when taking the entire word 
+      // 4 more 15-bit words, where the last one doesn't use all bits. We don't use
+      // those surplus bits yet, so we're good to go when taking the entire word
       // as a value, no masking required there.
-      // 
+      //
       // WARNING: this doesn't fit in an *integer* of 31 bits any more,
       // so we'll have to use floating point for at least one intermediate step!
       im = s.charCodeAt(1);
@@ -432,13 +432,13 @@ function decode_fp_value(s, opt) {
       opt.consumed_length += 4;
       //console.log('decode-normal-len=4', m, s.charCodeAt(1) / FPC_ENC_MODULO, s.charCodeAt(1), s.charCodeAt(2), s.charCodeAt(3), s.charCodeAt(4));
       break;
-    }  
+    }
     //console.log('decode-normal-1', vs, m, p, opt.consumed_length);
     m *= Math.pow(2, p);
     m *= 2;
     if (vs) {
       m = -m;
-    }   
+    }
     //console.log('decode-normal-2', m);
     return m;
   }
