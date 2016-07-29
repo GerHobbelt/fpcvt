@@ -1,7 +1,5 @@
 
 
-
-
 /*
 Performance Test of encode_fp_value() vs. vanilla JS:
 
@@ -22,6 +20,16 @@ Classic :: toPrecision(max)             1,763
 Custom :: v1                            2,191
                                         ±1.14%
                                         90% slower
+
+Custom :: v2                            (bit faster than v1)
+
+Note: when you take out the sanity checks `if (...) throw new Error(...)` then you gain about 10%:
+2367 ops/sec -> 2657 ops/sec in another test run.
+
+Note: there's a *huge* difference in performance, both relative and absolute, for these buggers in MSIE, FF and Chrome!
+(The 'classic' code wins by a factor of about 2 in Chrome, but amazingly enough our custom encoder wins in FF and is on par in MSIE.
+
+At least that's what the initial set of test runs seems to indicate...
 */
 
 
@@ -105,24 +113,48 @@ function encode_fp_value3(flt) {
       // and comparison to further check conditions suitable for short float encoding.
       //
       // `dy < 1024` is not required, theoretically, but here as a precaution:
-      if (dp >= -2 && dp <= 7 /* && dy < 1024 */) {
+      if (dp >= -2 && dp <= 10 /* (10 + 3) - 2 /* && dy < 1024 */) {
         var chk = dy % 1;
         //console.log('decimal float eligible? A:', flt, dy, chk, dp);
         if (chk === 0) {                     // alt check:   `(dy | 0) === dy`
           // this input value is potentially eligible for 'short decimal float encoding'...
           //
           // *short* decimal floats take 13-14 bits (10+~4) at 0x8000..0xCFFF as
-          // short floats have exponent -3..+5 in $1000 0sxx .. $1100 1sxx:
+          // short floats have exponent -3..+6 in $1000 0sxx .. $1100 1sxx:
           // --> 0x10..0x19 minus 0x10 --> [0x00..0x09] --> 10(!) exponent values.
           //
           // As we want to be able to store 'millions' (1E6) like that, our positive
           // range should reach +6, which leaves -3 (don't forget about the 0!);
           // we also want to support *milli* values (exponent = -3) which is
           // just feasible with this range.
+          // 
+          // [Edit] Note: we can extend this range into 0xExxx and 0xFxxx ranges,
+          // as long as we just make sure to skip the 0xDxxx range (technically,
+          // we only need to skip 0xD8xx..0xDFxx but I have other plans for 
+          // 0xD000..0xD7FF elsewhere...)
+          // 
+          // This would then result in an exponent range of 
+          // $1000 0sxx .. $1100 1sxx, $1110 0sxx .. $1111 1sxx (or $1111 0sxx
+          // if we care about never outputting Unicode Specials 0xFFF0..0xFFFF
+          // or UTF BOM 0xFEFF, for example), giving us an exponent range of 
+          // 0x10..0x19 + 0x1C..0x1E/0x1F --> 10 + 3/4 exponents.
+          // 
+          // As we choose to only go up to 0xF7FF, we keep 0xF80..0xFFFF as a 
+          // 'reserved for future use' range.
+          // 
+          // ---
+          // 
+          // Offset the exponent so it's always positive when encoded:
           dp += 2;
 
           // short float eligible value for sure!
           var dc;
+
+          // make sure to skip the 0xDxxx range by bumping the exponent:
+          if (dp > 9) {
+            // dp = 0xA --> dp = 0xC, ...
+            dp += 2;
+          }
 
           //
           // Bits in word:
@@ -131,7 +163,8 @@ function encode_fp_value3(flt) {
           // - 11..14: exponent 0..9 with offset -3 --> -3..+6
           // - 15: set to signal special values; this bit is also set for some special Unicode characters,
           //       so we can only set this bit and have particular values in bits 0..14 at the same time
-          //       in order to prevent a collision with those Unicode specials at 0xD800..0xDFFF.
+          //       in order to prevent a collision with those Unicode specials ('surrogates') 
+          //       at 0xD800..0xDFFF.
           //
           // alt:                    __(!!s << 10)_   _dy_____
           dc = 0x8000 + (dp << 11) + (s ? 1024 : 0) + (dy | 0);                  // the `| 0` shouldn't be necessary but is there as a precaution
@@ -145,7 +178,7 @@ function encode_fp_value3(flt) {
     // the value y will be >= 1 while for negative powers, i.e. tiny numbers, the
     // value 0 < y < 1.
     var y = flt / Math.pow(2, p);
-    y /= 2;
+    y /= 2;                       // we do this in two steps to allow handling even the largest floating point values, which have p=1023: Math.pow(2, p+1) would fail for those!
 
     var a = '';
     var b = y;       // alt: y - 1, but that only gives numbers 0 < b < 1 for p > 0
