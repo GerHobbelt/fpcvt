@@ -1,36 +1,5 @@
 
 
-/*
-Performance Test of encode_fp_value() vs. vanilla JS:
-
-Test                                    Ops/sec
-
-Classic : toString                      17,729
-                                        ±2.01%
-                                        17% slower
-
-Classic : add to string (= '' + val)    21,278
-                                        ±1.93%
-                                        fastest
-
-Classic :: toPrecision(max)             1,763
-                                        ±0.22%
-                                        92% slower
-
-Custom :: v1                            2,191
-                                        ±1.14%
-                                        90% slower
-
-Custom :: v2                            (bit faster than v1)
-
-Note: when you take out the sanity checks `if (...) throw new Error(...)` then you gain about 10%:
-2367 ops/sec -> 2657 ops/sec in another test run.
-
-Note: there's a *huge* difference in performance, both relative and absolute, for these buggers in MSIE, FF and Chrome!
-(The 'classic' code wins by a factor of about 2 in Chrome, but amazingly enough our custom encoder wins in FF and is on par in MSIE.
-
-At least that's what the initial set of test runs seems to indicate...
-*/
 
 
 function encode_fp_value2(flt) {
@@ -101,7 +70,15 @@ function encode_fp_value2(flt) {
     }
     // fall through!
 
-  // The range <1e7..1e-3] can be encoded as short float when the value matches a few conditions:
+  // The range <1e10..1e-3] can be encoded as short float when the value matches a few conditions:
+  // (Do note that the exponents tested here in this switch/case are powers-of-TWO and thus have a
+  // wider range compared to the decimal powers -3..+10)
+  case -9:			  // Math.log2(1e-3) ~ -9.966
+  case -8:
+  case -7:
+  case -6:
+  case -5:
+  case -4:
   case -3:
   case -2:
   case -1:
@@ -112,6 +89,43 @@ function encode_fp_value2(flt) {
   case 4:
   case 5:
   case 6:
+  case 7:
+  case 8:
+  case 9:
+  case 10:
+  case 11:
+  case 12:
+  case 13:
+  case 14:
+  case 15:
+  case 16:
+  case 17:
+  case 18:
+  case 19:
+  case 20:
+  case 21:
+  case 22:
+  case 23:
+  case 24:
+  case 25:
+  case 26:
+  case 27:
+  case 28:
+  case 29:
+  case 30:
+  case 31:
+  case 32:
+  case 33:
+  case 34:
+  case 35:
+  case 36:
+  case 37:
+  case 38:
+  case 39:
+  case 40:
+  case 41:
+  case 42:
+  case 43:			// Highest encodable number: Math.log2(999e10) ~ 43.18
     // if (!isFinite(flt)) {
     //   throw new Error('fp encoding: internal failure in short float: not a finite number');
     // }

@@ -1,36 +1,5 @@
 
 
-/*
-Performance Test of encode_fp_value() vs. vanilla JS:
-
-Test                                    Ops/sec
-
-Classic : toString                      17,729
-                                        ±2.01%
-                                        17% slower
-
-Classic : add to string (= '' + val)    21,278
-                                        ±1.93%
-                                        fastest
-
-Classic :: toPrecision(max)             1,763
-                                        ±0.22%
-                                        92% slower
-
-Custom :: v1                            2,191
-                                        ±1.14%
-                                        90% slower
-
-Custom :: v2                            (bit faster than v1)
-
-Note: when you take out the sanity checks `if (...) throw new Error(...)` then you gain about 10%:
-2367 ops/sec -> 2657 ops/sec in another test run.
-
-Note: there's a *huge* difference in performance, both relative and absolute, for these buggers in MSIE, FF and Chrome!
-(The 'classic' code wins by a factor of about 2 in Chrome, but amazingly enough our custom encoder wins in FF and is on par in MSIE.
-
-At least that's what the initial set of test runs seems to indicate...
-*/
 
 
 function encode_fp_value3(flt) {
