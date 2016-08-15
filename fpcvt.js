@@ -506,7 +506,7 @@ function decode_fp_value(s, opt) {
 
   // As we expect most encodings to be regular numbers, those will be in 0x0000..0x7FFF and
   // we don't want to spend the least amount of time in the 'special values' overhead,
-  // which would be added overhead if we did check for those *first* instead of at the *same time*
+  // which would be added overhead if we did check for those *first* instead of *at the same time*
   // as we do here by looking at the top nibble immediately:
   // 
   // nibble value:
