@@ -31,12 +31,12 @@ const FPC_ENC_MAXLEN = (function () {
 })();
 const FPC_ENC_LOG2_TO_LOG10 = 1 / Math.log2(10);
 
-// mask: 0x000F; offset: 0xD000:
-const FPC_ENC_POSITIVE_ZERO     = 0xD000;
-const FPC_ENC_NEGATIVE_ZERO     = 0xD001;
-const FPC_ENC_POSITIVE_INFINITY = 0xD002;
-const FPC_ENC_NEGATIVE_INFINITY = 0xD003;
-const FPC_ENC_NAN               = 0xD004;
+// mask: 0x000F; offset: 0xFFF0:
+const FPC_ENC_POSITIVE_ZERO     = 0xFFF0;
+const FPC_ENC_NEGATIVE_ZERO     = 0xFFF1;
+const FPC_ENC_POSITIVE_INFINITY = 0xFFF2;
+const FPC_ENC_NEGATIVE_INFINITY = 0xFFF3;
+const FPC_ENC_NAN               = 0xFFF4;
 
 const FPC_DEC_POSITIVE_ZERO     = 0;
 const FPC_DEC_NEGATIVE_ZERO     = -0;
@@ -269,7 +269,7 @@ function encode_fp_value(flt) {
   // integers, most of the time!
   // modulo: we can use 0x8000 or any lower power of 2 to prevent producing illegal Unicode
   // sequences (the extra Unicode pages are triggered by a set of codes in the upper range
-  // which we cannot create this way, so no unicode verifiers will ever catch us for being
+  // which we cannot create this way, so no Unicode verifiers will ever catch us for being
   // illegal now!)
   //
   // WARNING: the exponent is not exactly 12 bits when you look at the Math.log2()
@@ -325,7 +325,7 @@ function encode_fp_value(flt) {
       // Here we detect quickly if the mantissa would span at most 3 decimal digits
       // and the exponent happens to be within reasonable range: when this is the
       // case, we encode them as a *decimal short float* in 13 bits, which happen
-      // to fit snugly in the unicode word range 0x8000..0xC000 or in a larger
+      // to fit snugly in the Unicode word range 0x8000..0xC000 or in a larger
       // *decimal float* which spans two words: 13+15 bits.
       var dp = (exp2 * FPC_ENC_LOG2_TO_LOG10 + 1) | 0;
       var dy = flt / Math.pow(10, dp - 3);    // take mantissa (which is guaranteed to be in range [0.999 .. 0]) and multiply by 1000
@@ -344,25 +344,74 @@ function encode_fp_value(flt) {
       if (chk === 0) {                     // alt check:   `(dy | 0) === dy`
         // this input value is potentially eligible for 'short decimal float encoding'...
         //
-        // *short* decimal floats take 13-14 bits (10+~4) at 0x8000..0xCFFF as
-        // short floats have exponent -3..+6 in $1000 0sxx .. $1100 1sxx:
-        // --> 0x10..0x19 minus 0x10 --> [0x00..0x09] --> 10(!) exponent values.
+        // *short* decimal floats take 13-14 bits (10+~4) at 
+        // 0x8000..0xD7FF + 0xE000..0xF7FF (since we skip the Unicode Surrogate range
+        // at 0xD800.0xDFFF (http://unicodebook.readthedocs.io/unicode_encodings.html#utf-16-surrogate-pairs).
+        // 
+        // Our original design had the requirement (more like a *wish* really)
+        // that 'short floats' have decimal exponent -3..+6 at least and encode
+        // almost all 'human numbers', i.e. values that humans enter regularly
+        // in their data: these values usually only have 2-3 significant
+        // digits so we should be able to encode those in a rather tiny mantissa.
+        // 
+        // The problem then is with encoding decimal fractions as quite many of them
+        // don't fit a low-digit-count *binary* mantissa, e.g. 0.5 or 0.3 are
+        // a nightmare if you want *precise* encoding in a tiny binary mantissa.
+        // The solution we came up with was to multiply the number by a decimal power
+        // of 10 so that 'eligible' decimal fractions would actually look like 
+        // integer numbers: when you multiply by 1000, 0.3 becomes 300 which is
+        // perfectly easy to encode in a tiny mantissa (we would need 9 bits).
+        // 
+        // Then the next problem would be to encode large integers, e.g. 1 million,
+        // in a tiny mantissa: hence we came up with the notion of a *decimal*
+        // *floating* *point* value notation for 'short values': we note the 
+        // power as a decimal rather than a binary power and then define the
+        // mantissa as an integer value from, say, 1..1000, hence 1 million (1e6)
+        // would then be encoded as (power=6,mantissa=1), for example.
+        // 
+        // It is more interesting to look at values like 0.33 or 15000: the latter
+        // SHOULD NOT be encoded as (power=4,mantissa=1.5) because that wouldn't work,
+        // but instead the latter should be encoded as (power=3,mantissa=15) to
+        // ensure we get a small mantissa.
+        // As we noted before that 'human values' have few significant digits in
+        // the decimal value, the key is to multiply the value with a decimal 
+        // power until the significant digits are in the integer range, i.e. if
+        // we expect to encode 3-digit values, we 'shift the decimal power by +3' 
+        // so that the mantissa, previously in the range 0..1, now will be in the
+        // range 0..1e3, hence input value 0.33 becomes 0.33e0, shifted by 
+        // decimal power +3 this becomes 330e-3 (330 * 10e-3 === 0.330 === 0.33e0),
+        // which can be encoded precisely in a 9-bit mantissa.
+        // Ditto for example value 15000: while the binary floating point would
+        // encode this as the equivalent of 0.15e6, we transform this into 150e3,
+        // which fits in a 9 bit mantissa as well.
+        // 
+        // ---
+        // 
+        // Now that we've addressed the non-trivial 'decimal floating point' 
+        // concept from 'short float notation', we can go and check how many 
+        // decimal power values we can store: given that we need to *skip*
+        // the Unicode Surrogate ranges (High and Low) at 0xD800..0xDFFF, plus
+        // the Unicode specials at the 0xFFF0..0xFFFF range we should look at
+        // the available bit patterns here... (really we only would be bothered
+        // about 0xFFFD..0xFFFF, but it helps us in other ways to make this 
+        // range a wee little wider: then we can use those code points to 
+        // store the special floating point values NaN, Inf, etc.)
+        // 
+        // For 'short floats' we have the code range 0x8000..0xFFFF, excluding
+        // those skip ranges, i.e. bit15 is always SET for 'short float'. Now
+        // let's look at the bit patterns available for our decimal power,
+        // assuming sign and a mantissa good for 3 decimal significant digits
+        // is placed in the low bits zone (3 decimal digits takes 10 bits):
+        // This gives us 0x80-0xD8 ~ $1000 0sxx .. $1100 1sxx 
+        // + 0xE0-0xFE ~ $1110 0sxx .. $1111 0sxx
+        // --> power values 0x10..0x19 minus 0x10 --> [0x00..0x09] --> 10 exponent values.
+        // + 0x1C..0x1E minus 0x1C --> [0x00..0x02]+offset=10 --> 3 extra values! 
         //
-        // As we want to be able to store 'millions' (1E6) like that, our positive
-        // range should reach +6, which leaves -3 (don't forget about the 0!);
-        // we also want to support *milli* values (exponent = -3) which is
-        // just feasible with this range.
-        // 
-        // [Edit] Note: we can extend this range into 0xExxx and 0xFxxx ranges,
-        // as long as we just make sure to skip the 0xDxxx range (technically,
-        // we only need to skip 0xD8xx..0xDFxx but I have other plans for 
-        // 0xD000..0xD7FF elsewhere...)
-        // 
-        // This would then result in an exponent range of 
-        // $1000 0sxx .. $1100 1sxx, $1110 0sxx .. $1111 1sxx (or $1111 0sxx
-        // if we care about never outputting Unicode Specials 0xFFF0..0xFFFF
-        // or UTF BOM 0xFEFF, for example), giving us an exponent range of 
-        // 0x10..0x19 + 0x1C..0x1E/0x1F --> 10 + 3/4 exponents.
+        // As we want to be able to store 'millis' and 'millions' at least,
+        // there's plenty room as that required range is 10 (6+1+3: don't 
+        // forget about the power value 0!). With this range, it's just feasible
+        // to also support *billions* (1E9) thanks to the extra range 0x1C..0x1E
+        // in Unicode code points 0xE000..0xFEFF.
         // 
         // As we choose to only go up to 0xF7FF, we keep 0xF80..0xFFFF as a 
         // 'reserved for future use' range.
@@ -376,7 +425,7 @@ function encode_fp_value(flt) {
           // short float eligible value for sure!
           var dc;
 
-          // make sure to skip the 0xDxxx range by bumping the exponent:
+          // make sure to skip the 0xD8xx range by bumping the exponent:
           if (dp > 9) {
             // dp = 0xA --> dp = 0xC, ...
             dp += 2;
@@ -418,7 +467,7 @@ function encode_fp_value(flt) {
       throw new Error('fp encoding: ZERO mantissa');
     }
 
-    // and show the unicode character codes for debugging/diagnostics:
+    // and show the Unicode character codes for debugging/diagnostics:
     //var dbg = [0 /* Note: this slot will be *correctly* filled at the end */];
     //console.log('dbg @ start', 0, p + 1024 + s, flt, dbg, s, p, y, b);
 
@@ -513,23 +562,24 @@ function decode_fp_value(s, opt) {
   // 0..7: regular 'long encoding' floating point values. Act as *implicit* NUM opcodes.
   // 8..C: 'short float' encoded floating point values. Act as *implicit* NUM opcodes.
   // D: part of this range is illegal ('DO NOT USE') but the lower half (0xD000..0xD7FF),
-  //    about 2K codes worth, is used for the other opcodes.
+  //    about 2K codes worth, is used for the 'short float' encoded floating point values.
   // E: rest of the range for 'short float' encoded floating point values. 
   //    Act as *implicit* NUM opcodes.
   // F: rest of the range for 'short float' encoded floating point values. 
   //    Act as *implicit* NUM opcodes. (0xF800..0xFFFF: reserved for future use) 
-  switch (c0 & 0xF000) {
-  // This range includes the Unicode extended character ranges ('Surrogates') and MUST NOT be used by us for 'binary encoding'
+  switch (c0 & 0xF800) {
+  // This range spans the Unicode extended character ranges ('Surrogates') and MUST NOT be used by us for 'binary encoding'
   // purposes as we would than clash with any potential Unicode validators out there! The key of the current
   // design is that the encoded output is, itself, *legal* Unicode -- though admittedly I don't bother with
   // the Unicode conditions surrounding shift characters such as these:
   // 
-  // which reside in the other ranges that we DO employ for our own nefarious encoding purposes!
+  //   Z̤̺̦̤̰̠̞̃̓̓̎ͤ͒a̮̩̞͎̦̘̮l̖̯̞̝̗̥͙͋̔̆͊ͤ͐̚g͖̣̟̼͙ͪ̆͌̇ỏ̘̯̓ ̮̣͉̺̽͑́i̶͎̳̲ͭͅs̗̝̱̜̱͙̽ͥ̋̄ͨ̑͠ ̬̲͇̭̖ͭ̈́̃G̉̐̊ͪ͟o͓̪̗̤̳̱̅ȍ̔d̳̑ͥͧ̓͂ͤ ́͐́̂to̮̘̖̱͉̜̣ͯ̄͗ǫ̬͚̱͈̮̤̞̿̒ͪ!͆̊ͬͥ̆̊͋
   // 
-  // By the way: do note that the clash-potential is for the Surrogates range 0xD800-0xDFFF hence 
-  // 0xD000-0xD7FF (2K) *is* at least theoretically available for our encoding. And we DO use them now
-  // for encoding floating point 'special values'.
-  case 0xD000:
+  // which reside in the other ranges that we DO employ for our own nefarious encoding purposes!
+  case 0xD800:
+    throw new Error('illegal fp encoding value in 0xDXXX unicode range');
+
+  case 0xF800:
     // specials:
     switch (c0) {
     case FPC_ENC_POSITIVE_ZERO:
@@ -548,15 +598,20 @@ function decode_fp_value(s, opt) {
       return NaN;
 
     default:
-      throw new Error('illegal fp encoding value in 0xDXXX unicode range');
+      throw new Error('illegal fp encoding value in 0xFXXX unicode range');
     }
     break;
 
   case 0x8000:
+  case 0x8800:
   case 0x9000:
+  case 0x9800:
   case 0xA000:
+  case 0xA800:
   case 0xB000:
+  case 0xB800:
   case 0xC000:
+  case 0xC800:
     // 'human values' encoded as 'short floats':
     //
     // Bits in word:
@@ -584,6 +639,7 @@ function decode_fp_value(s, opt) {
 
   // (0xF800..0xFFFF: reserved for future use)
   case 0xE000:
+  case 0xE800:
   case 0xF000:
     // 'human values' encoded as 'short floats':
     //
@@ -682,6 +738,11 @@ function decode_fp_value(s, opt) {
       im = s.charCodeAt(3);
       im <<= 15;
       im |= s.charCodeAt(4);
+      // Nasty Thought(tm): as we don't mask the lowest bits of that byte we MAY
+      // receive some cruft below the lowest significant bit of the encoded mantissa
+      // when we re-use those bits for other purposes one day. However, we can argue
+      // that we don't need to mask them bits anyway as they would disappear as
+      // noise below the least significant mantissa bit anyway. :-)
       m += im / (FPC_ENC_MODULO * FPC_ENC_MODULO * FPC_ENC_MODULO * FPC_ENC_MODULO);
       opt.consumed_length += 4;
       //console.log('decode-normal-len=4', m, s.charCodeAt(1) / FPC_ENC_MODULO, s.charCodeAt(1), s.charCodeAt(2), s.charCodeAt(3), s.charCodeAt(4));

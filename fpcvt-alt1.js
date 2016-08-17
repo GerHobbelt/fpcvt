@@ -16,7 +16,7 @@ function encode_fp_value2(flt) {
   // integers, most of the time!
   // modulo: we can use 0x8000 or any lower power of 2 to prevent producing illegal Unicode
   // sequences (the extra Unicode pages are triggered by a set of codes in the upper range
-  // which we cannot create this way, so no unicode verifiers will ever catch us for being
+  // which we cannot create this way, so no Unicode verifiers will ever catch us for being
   // illegal now!)
   //
   // WARNING: the exponent is not exactly 12 bits when you look at the Math.log2()
@@ -138,7 +138,7 @@ function encode_fp_value2(flt) {
     // Here we detect quickly if the mantissa would span at most 3 decimal digits
     // and the exponent happens to be within reasonable range: when this is the
     // case, we encode them as a *decimal short float* in 13 bits, which happen
-    // to fit snugly in the unicode word range 0x8000..0xC000 or in a larger
+    // to fit snugly in the Unicode word range 0x8000..0xC000 or in a larger
     // *decimal float* which spans two words: 13+15 bits.
     var dp = (exp2 * FPC_ENC_LOG2_TO_LOG10 + 1) | 0;
     var dy = flt / Math.pow(10, dp - 3);    // take mantissa (which is guaranteed to be in range [0.999 .. 0]) and multiply by 1000
@@ -154,25 +154,74 @@ function encode_fp_value2(flt) {
       if (chk === 0) {                     // alt check:   `(dy | 0) === dy`
         // this input value is potentially eligible for 'short decimal float encoding'...
         //
-        // *short* decimal floats take 13-14 bits (10+~4) at 0x8000..0xCFFF as
-        // short floats have exponent -3..+6 in $1000 0sxx .. $1100 1sxx:
-        // --> 0x10..0x19 minus 0x10 --> [0x00..0x09] --> 10(!) exponent values.
+        // *short* decimal floats take 13-14 bits (10+~4) at 
+        // 0x8000..0xD7FF + 0xE000..0xF7FF (since we skip the Unicode Surrogate range
+        // at 0xD800.0xDFFF (http://unicodebook.readthedocs.io/unicode_encodings.html#utf-16-surrogate-pairs).
+        // 
+        // Our original design had the requirement (more like a *wish* really)
+        // that 'short floats' have decimal exponent -3..+6 at least and encode
+        // almost all 'human numbers', i.e. values that humans enter regularly
+        // in their data: these values usually only have 2-3 significant
+        // digits so we should be able to encode those in a rather tiny mantissa.
+        // 
+        // The problem then is with encoding decimal fractions as quite many of them
+        // don't fit a low-digit-count *binary* mantissa, e.g. 0.5 or 0.3 are
+        // a nightmare if you want *precise* encoding in a tiny binary mantissa.
+        // The solution we came up with was to multiply the number by a decimal power
+        // of 10 so that 'eligible' decimal fractions would actually look like 
+        // integer numbers: when you multiply by 1000, 0.3 becomes 300 which is
+        // perfectly easy to encode in a tiny mantissa (we would need 9 bits).
+        // 
+        // Then the next problem would be to encode large integers, e.g. 1 million,
+        // in a tiny mantissa: hence we came up with the notion of a *decimal*
+        // *floating* *point* value notation for 'short values': we note the 
+        // power as a decimal rather than a binary power and then define the
+        // mantissa as an integer value from, say, 1..1000, hence 1 million (1e6)
+        // would then be encoded as (power=6,mantissa=1), for example.
+        // 
+        // It is more interesting to look at values like 0.33 or 15000: the latter
+        // SHOULD NOT be encoded as (power=4,mantissa=1.5) because that wouldn't work,
+        // but instead the latter should be encoded as (power=3,mantissa=15) to
+        // ensure we get a small mantissa.
+        // As we noted before that 'human values' have few significant digits in
+        // the decimal value, the key is to multiply the value with a decimal 
+        // power until the significant digits are in the integer range, i.e. if
+        // we expect to encode 3-digit values, we 'shift the decimal power by +3' 
+        // so that the mantissa, previously in the range 0..1, now will be in the
+        // range 0..1e3, hence input value 0.33 becomes 0.33e0, shifted by 
+        // decimal power +3 this becomes 330e-3 (330 * 10e-3 === 0.330 === 0.33e0),
+        // which can be encoded precisely in a 9-bit mantissa.
+        // Ditto for example value 15000: while the binary floating point would
+        // encode this as the equivalent of 0.15e6, we transform this into 150e3,
+        // which fits in a 9 bit mantissa as well.
+        // 
+        // ---
+        // 
+        // Now that we've addressed the non-trivial 'decimal floating point' 
+        // concept from 'short float notation', we can go and check how many 
+        // decimal power values we can store: given that we need to *skip*
+        // the Unicode Surrogate ranges (High and Low) at 0xD800..0xDFFF, plus
+        // the Unicode specials at the 0xFFF0..0xFFFF range we should look at
+        // the available bit patterns here... (really we only would be bothered
+        // about 0xFFFD..0xFFFF, but it helps us in other ways to make this 
+        // range a wee little wider: then we can use those code points to 
+        // store the special floating point values NaN, Inf, etc.)
+        // 
+        // For 'short floats' we have the code range 0x8000..0xFFFF, excluding
+        // those skip ranges, i.e. bit15 is always SET for 'short float'. Now
+        // let's look at the bit patterns available for our decimal power,
+        // assuming sign and a mantissa good for 3 decimal significant digits
+        // is placed in the low bits zone (3 decimal digits takes 10 bits):
+        // This gives us 0x80-0xD8 ~ $1000 0sxx .. $1100 1sxx 
+        // + 0xE0-0xFE ~ $1110 0sxx .. $1111 0sxx
+        // --> power values 0x10..0x19 minus 0x10 --> [0x00..0x09] --> 10 exponent values.
+        // + 0x1C..0x1E minus 0x1C --> [0x00..0x02]+offset=10 --> 3 extra values! 
         //
-        // As we want to be able to store 'millions' (1E6) like that, our positive
-        // range should reach +6, which leaves -3 (don't forget about the 0!);
-        // we also want to support *milli* values (exponent = -3) which is
-        // just feasible with this range.
-        // 
-        // [Edit] Note: we can extend this range into 0xExxx and 0xFxxx ranges,
-        // as long as we just make sure to skip the 0xDxxx range (technically,
-        // we only need to skip 0xD8xx..0xDFxx but I have other plans for 
-        // 0xD000..0xD7FF elsewhere...)
-        // 
-        // This would then result in an exponent range of 
-        // $1000 0sxx .. $1100 1sxx, $1110 0sxx .. $1111 1sxx (or $1111 0sxx
-        // if we care about never outputting Unicode Specials 0xFFF0..0xFFFF
-        // or UTF BOM 0xFEFF, for example), giving us an exponent range of 
-        // 0x10..0x19 + 0x1C..0x1E/0x1F --> 10 + 3/4 exponents.
+        // As we want to be able to store 'millis' and 'millions' at least,
+        // there's plenty room as that required range is 10 (6+1+3: don't 
+        // forget about the power value 0!). With this range, it's just feasible
+        // to also support *billions* (1E9) thanks to the extra range 0x1C..0x1E
+        // in Unicode code points 0xE000..0xFEFF.
         // 
         // As we choose to only go up to 0xF7FF, we keep 0xF80..0xFFFF as a 
         // 'reserved for future use' range.
@@ -185,7 +234,7 @@ function encode_fp_value2(flt) {
         // short float eligible value for sure!
         var dc;
 
-        // make sure to skip the 0xDxxx range by bumping the exponent:
+        // make sure to skip the 0xD8xx range by bumping the exponent:
         if (dp > 9) {
           // dp = 0xA --> dp = 0xC, ...
           dp += 2;
@@ -287,7 +336,7 @@ function encode_fp_value2(flt) {
     //   throw new Error('fp encoding: ZERO mantissa');
     // }
 
-    // and show the unicode character codes for debugging/diagnostics:
+    // and show the Unicode character codes for debugging/diagnostics:
     //var dbg = [0 /* Note: this slot will be *correctly* filled at the end */];
     //console.log('dbg @ start', 0, p + 1024 + s, flt, dbg, s, p, y, b);
 
@@ -332,6 +381,8 @@ function encode_fp_value2(flt) {
     return a;
   }
 }
+
+
 
 
 

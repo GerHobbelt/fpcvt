@@ -14,20 +14,31 @@ function decode_fp_value2(s, opt) {
 
   // As we expect most encodings to be regular numbers, those will be in 0x0000..0x7FFF and
   // we don't want to spend the least amount of time in the 'special values' overhead,
-  // which would be added overhead if we did check for those *first* instead of at the *same time*
+  // which would be added overhead if we did check for those *first* instead of *at the same time*
   // as we do here by looking at the top nibble immediately:
-  switch (c0 & 0xF000) {
-  // This range includes the Unicode extended character ranges ('Surrogates') and MUST NOT be used by us for 'binary encoding'
+  // 
+  // nibble value:
+  // 0..7: regular 'long encoding' floating point values. Act as *implicit* NUM opcodes.
+  // 8..C: 'short float' encoded floating point values. Act as *implicit* NUM opcodes.
+  // D: part of this range is illegal ('DO NOT USE') but the lower half (0xD000..0xD7FF),
+  //    about 2K codes worth, is used for the 'short float' encoded floating point values.
+  // E: rest of the range for 'short float' encoded floating point values. 
+  //    Act as *implicit* NUM opcodes.
+  // F: rest of the range for 'short float' encoded floating point values. 
+  //    Act as *implicit* NUM opcodes. (0xF800..0xFFFF: reserved for future use) 
+  switch (c0 & 0xF800) {
+  // This range spans the Unicode extended character ranges ('Surrogates') and MUST NOT be used by us for 'binary encoding'
   // purposes as we would than clash with any potential Unicode validators out there! The key of the current
   // design is that the encoded output is, itself, *legal* Unicode -- though admittedly I don't bother with
   // the Unicode conditions surrounding shift characters such as these:
   // 
-  // which reside in the other ranges that we DO employ for our own nefarious encoding purposes!
+  //   Z̤̺̦̤̰̠̞̃̓̓̎ͤ͒a̮̩̞͎̦̘̮l̖̯̞̝̗̥͙͋̔̆͊ͤ͐̚g͖̣̟̼͙ͪ̆͌̇ỏ̘̯̓ ̮̣͉̺̽͑́i̶͎̳̲ͭͅs̗̝̱̜̱͙̽ͥ̋̄ͨ̑͠ ̬̲͇̭̖ͭ̈́̃G̉̐̊ͪ͟o͓̪̗̤̳̱̅ȍ̔d̳̑ͥͧ̓͂ͤ ́͐́̂to̮̘̖̱͉̜̣ͯ̄͗ǫ̬͚̱͈̮̤̞̿̒ͪ!͆̊ͬͥ̆̊͋
   // 
-  // By the way: do note that the clash-potential is for the Surrogates range 0xD800-0xDFFF hence 
-  // 0xD000-0xD7FF (2K) *is* at least theoretically available for our encoding. And we DO use them now
-  // for encoding floating point 'special values'.
-  case 0xD000:
+  // which reside in the other ranges that we DO employ for our own nefarious encoding purposes!
+  case 0xD800:
+    throw new Error('illegal fp encoding value in 0xDXXX unicode range');
+
+  case 0xF800:
     // specials:
     switch (c0) {
     case FPC_ENC_POSITIVE_ZERO:
@@ -46,15 +57,20 @@ function decode_fp_value2(s, opt) {
       return NaN;
 
     default:
-      throw new Error('illegal fp encoding value in 0xDXXX unicode range');
+      throw new Error('illegal fp encoding value in 0xFXXX unicode range');
     }
     break;
 
   case 0x8000:
+  case 0x8800:
   case 0x9000:
+  case 0x9800:
   case 0xA000:
+  case 0xA800:
   case 0xB000:
+  case 0xB800:
   case 0xC000:
+  case 0xC800:
     // 'human values' encoded as 'short floats':
     //
     // Bits in word:
@@ -82,6 +98,7 @@ function decode_fp_value2(s, opt) {
 
   // (0xF800..0xFFFF: reserved for future use)
   case 0xE000:
+  case 0xE800:
   case 0xF000:
     // 'human values' encoded as 'short floats':
     //
@@ -190,6 +207,11 @@ function decode_fp_value2(s, opt) {
       im <<= 15;
       idx++;
       im |= s.charCodeAt(idx);
+      // Nasty Thought(tm): as we don't mask the lowest bits of that byte we MAY
+      // receive some cruft below the lowest significant bit of the encoded mantissa
+      // when we re-use those bits for other purposes one day. However, we can argue
+      // that we don't need to mask them bits anyway as they would disappear as
+      // noise below the least significant mantissa bit anyway. :-)
       m += im / (FPC_ENC_MODULO * FPC_ENC_MODULO * FPC_ENC_MODULO * FPC_ENC_MODULO);
       opt.consumed_length += 4;
       //console.log('decode-normal-len=4', m, s.charCodeAt(1) / FPC_ENC_MODULO, s.charCodeAt(1), s.charCodeAt(2), s.charCodeAt(3), s.charCodeAt(4));
@@ -205,6 +227,9 @@ function decode_fp_value2(s, opt) {
     return m;
   }
 }
+
+
+
 
 
 
