@@ -86,7 +86,7 @@ function encode_fp_value4(flt) {
   // The range <1e10..1e-3] can be encoded as short float when the value matches a few conditions:
   // (Do note that the exponents tested here in this switch/case are powers-of-TWO and thus have a
   // wider range compared to the decimal powers -3..+10)
-  if (p >= -9 /* Math.log2(1e-3) ~ -9.966 */ && p < 46 /* Highest encodable number: Math.log2(999e11) ~ 46.51 */ ) {
+  if (p >= -9 /* Math.log2(1e-3) ~ -9.966 */ && p < 43 /* Highest encodable number: Math.log2(999e10) ~ 43.15 */ ) {
     // if (!isFinite(flt)) {
     //   throw new Error('fp encoding: internal failure in short float: not a finite number');
     // }
@@ -109,7 +109,7 @@ function encode_fp_value4(flt) {
     // and comparison to further check conditions suitable for short float encoding.
     //
     // `dy < 1024` is not required, theoretically, but here as a precaution:
-    if (dp >= -2 && dp <= 11 /* (L= 11 + 3) - o=2 */ /* && dy < 1024 */) {
+    if (dp >= -2 && dp < 12 /* (L= 11 + 3) - o=2 */ /* && dy < 1024 */) {
       var chk = dy % 1;
       //console.log('decimal float eligible? A:', flt, dy, chk, dp);
       if (chk === 0) {                     // alt check:   `(dy | 0) === dy`
@@ -196,9 +196,9 @@ function encode_fp_value4(flt) {
         var dc;
 
         // make sure to skip the 0xD8xx range by bumping the exponent:
-        if (dp > 10) {
-          // dp = 0xA --> dp = 0xC, ...
-          dp += 2;
+        if (dp >= 11) {
+          // dp = 0xB --> dp = 0xC, ...
+          dp++;
         }
 
         //

@@ -82,7 +82,7 @@ function encode_fp_value3(flt) {
       // and comparison to further check conditions suitable for short float encoding.
       //
       // `dy < 1024` is not required, theoretically, but here as a precaution:
-      if (dp >= -2 && dp <= 11 /* (L=11 + 3) - o=2 */ /* && dy < 1024 */) {
+      if (dp >= -2 && dp < 12 /* (L=11 + 3) - o=2 */ /* && dy < 1024 */) {
         var chk = dy % 1;
         //console.log('decimal float eligible? A:', flt, dy, chk, dp);
         if (chk === 0) {                     // alt check:   `(dy | 0) === dy`
@@ -169,9 +169,9 @@ function encode_fp_value3(flt) {
           var dc;
 
           // make sure to skip the 0xD8xx range by bumping the exponent:
-          if (dp > 10) {
-            // dp = 0xA --> dp = 0xC, ...
-            dp += 2;
+          if (dp >= 11) {
+            // dp = 0xB --> dp = 0xC, ...
+            dp++;
           }
 
           //

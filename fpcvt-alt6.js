@@ -2,7 +2,9 @@
 
 
 
-function encode_fp_value2(flt) {
+// Exact replica of the original in fpcvt.js, but now with all error checks stripped for performance checking:
+
+function encode_fp_value0(flt) {
   // sample JS code to encode a IEEE754 floating point value in a Unicode string.
   //
   // With provision to detect and store +0/-0 and +/-Inf and NaN
@@ -32,123 +34,51 @@ function encode_fp_value2(flt) {
   //              Math.pow(2,1023) * Math.pow(2,-1076) === 0
   //
 
-  // encode sign in bit 12
-  var s;
-  if (flt < 0) {
-    s = 4096;
-    flt = -flt;
-  } else {
-    s = 0;
-  }
-
-  // extract power from fp value    (WARNING: MSIE does not support log2(), see MDN!)
-  var exp2 = Math.log2(flt);
-  var p = exp2 | 0;  // --> +1023..-1024, pardon!, -1074 (!!!)
-  switch (p) {
-  // The power 0 also shows up when we treat a NaN or +/-Inf or +/-0:
-  case 0:
-    if (!flt) {
-      // +0, -0 or NaN:
-      if (isNaN(flt)) {
-        return String.fromCharCode(FPC_ENC_NAN);
+  if (!flt) {
+    // +0, -0 or NaN:
+    if (isNaN(flt)) {
+      return String.fromCharCode(FPC_ENC_NAN);
+    } else {
+      // detect negative zero:
+      var is_negzero = Math.atan2(0, flt);  // +0 --> 0, -0 --> PI
+      if (is_negzero) {
+        return String.fromCharCode(FPC_ENC_NEGATIVE_ZERO);
       } else {
-        // detect negative zero:
-        var is_negzero = Math.atan2(0, flt);  // +0 --> 0, -0 --> PI
-        if (is_negzero) {
-          return String.fromCharCode(FPC_ENC_NEGATIVE_ZERO);
-        } else {
-          return String.fromCharCode(FPC_ENC_POSITIVE_ZERO);
-        }
-      }
-    } else if (!isFinite(flt)) {
-      // -Inf / +Inf
-      if (flt > 0) {
-        return String.fromCharCode(FPC_ENC_POSITIVE_INFINITY);
-      } else {
-        return String.fromCharCode(FPC_ENC_NEGATIVE_INFINITY);
+        return String.fromCharCode(FPC_ENC_POSITIVE_ZERO);
       }
     }
-    // fall through!
+  } else if (isFinite(flt)) {
+    // encode sign in bit 12
+    var s;
+    if (flt < 0) {
+      s = 4096;
+      flt = -flt;
+    } else {
+      s = 0;
+    }
 
-  // The range <1e10..1e-3] can be encoded as short float when the value matches a few conditions:
-  // (Do note that the exponents tested here in this switch/case are powers-of-TWO and thus have a
-  // wider range compared to the decimal powers -3..+10)
-  case -9:			  // Math.log2(1e-3) ~ -9.966
-  case -8:
-  case -7:
-  case -6:
-  case -5:
-  case -4:
-  case -3:
-  case -2:
-  case -1:
-  //case 0:
-  case 1:
-  case 2:
-  case 3:
-  case 4:
-  case 5:
-  case 6:
-  case 7:
-  case 8:
-  case 9:
-  case 10:
-  case 11:
-  case 12:
-  case 13:
-  case 14:
-  case 15:
-  case 16:
-  case 17:
-  case 18:
-  case 19:
-  case 20:
-  case 21:
-  case 22:
-  case 23:
-  case 24:
-  case 25:
-  case 26:
-  case 27:
-  case 28:
-  case 29:
-  case 30:
-  case 31:
-  case 32:
-  case 33:
-  case 34:
-  case 35:
-  case 36:
-  case 37:
-  case 38:
-  case 39:
-  case 40:
-  case 41:
-  case 42:
-  case 43:			// Highest encodable number: Math.log2(999e10) ~ 43.18
-    // if (!isFinite(flt)) {
-    //   throw new Error('fp encoding: internal failure in short float: not a finite number');
-    // }
-
-    // Note:
-    // We encode a certain range and type of values specially as that will deliver shorter Unicode
-    // sequences: 'human' values like `4200` and `0.125` (1/8th) are almost always
-    // not encoded *exactly* in IEE754 floats due to their base(2) storage nature.
-    //
-    // Here we detect quickly if the mantissa would span at most 3 decimal digits
-    // and the exponent happens to be within reasonable range: when this is the
-    // case, we encode them as a *decimal short float* in 13 bits, which happen
-    // to fit snugly in the Unicode word range 0x8000..0xC000 or in a larger
-    // *decimal float* which spans two words: 13+15 bits.
-    var dp = (exp2 * FPC_ENC_LOG2_TO_LOG10 + 1) | 0;
-    var dy = flt / Math.pow(10, dp - 3);    // take mantissa (which is guaranteed to be in range [0.999 .. 0]) and multiply by 1000
-    //console.log('decimal float test:', flt, exp2, exp2 * FPC_ENC_LOG2_TO_LOG10, p, dp, dy);
-
-    // fist check exponent, only when in range perform the costly modulo operation
-    // and comparison to further check conditions suitable for short float encoding.
-    //
-    // `dy < 1024` is not required, theoretically, but here as a precaution:
-    if (dp >= -2 && dp < 12 /* (L= 11 + 3) - o=2 */ /* && dy < 1024 */) {
+    // extract power from fp value    (WARNING: MSIE does not support log2(), see MDN!)
+    var exp2 = Math.log2(flt);
+    var p = exp2 | 0;  // --> +1023..-1024, pardon!, -1074 (!!!)
+    if (p < -1024) {
+      // Correct for our process: we actually want the bits in the IEE754 exponent, hence
+      // exponents lower than -1024, a.k.a. *denormalized zeroes*, are treated exactly
+      // like that in our code as well: we will produce leading mantissa ZERO words then.
+      p = -1024;
+    } else {
+      // Note:
+      // We encode a certain range and type of values specially as that will deliver shorter Unicode
+      // sequences: 'human' values like `4200` and `0.125` (1/8th) are almost always
+      // not encoded *exactly* in IEE754 floats due to their base(2) storage nature.
+      //
+      // Here we detect quickly if the mantissa would span at most 3 decimal digits
+      // and the exponent happens to be within reasonable range: when this is the
+      // case, we encode them as a *decimal short float* in 13 bits, which happen
+      // to fit snugly in the Unicode word range 0x8000..0xC000 or in a larger
+      // *decimal float* which spans two words: 13+15 bits.
+      var dp = (exp2 * FPC_ENC_LOG2_TO_LOG10 + 1) | 0;
+      var dy = flt / Math.pow(10, dp - 3);    // take mantissa (which is guaranteed to be in range [0.999 .. 0]) and multiply by 1000
+      //console.log('decimal float test:', flt, exp2, exp2 * FPC_ENC_LOG2_TO_LOG10, p, dp, dy);
       var chk = dy % 1;
       //console.log('decimal float eligible? A:', flt, dy, chk, dp);
       if (chk === 0) {                     // alt check:   `(dy | 0) === dy`
@@ -230,111 +160,43 @@ function encode_fp_value2(flt) {
         // 
         // Offset the exponent so it's always positive when encoded:
         dp += 2;
+        // `dy < 1024` is not required, theoretically, but here as a precaution:
+        if (dp >= 0 && dp < 14 /* (L= 11 + 3) */ /* && dy < 1024 */) {
+          // short float eligible value for sure!
+          var dc;
 
-        // short float eligible value for sure!
-        var dc;
+          // make sure to skip the 0xD8xx range by bumping the exponent:
+          if (dp >= 11) {
+            // dp = 0xB --> dp = 0xC, ...
+            dp++;
+          }
 
-        // make sure to skip the 0xD8xx range by bumping the exponent:
-        if (dp >= 11) {
-          // dp = 0xB --> dp = 0xC, ...
-          dp++;
+          //
+          // Bits in word:
+          // - 0..9: integer mantissa; values 0..1023
+          // - 10: sign
+          // - 11..14: exponent 0..9 with offset -3 --> -3..+6
+          // - 15: set to signal special values; this bit is also set for some special Unicode characters,
+          //       so we can only set this bit and have particular values in bits 0..14 at the same time
+          //       in order to prevent a collision with those Unicode specials ('surrogates') 
+          //       at 0xD800..0xDFFF.
+          //
+          // alt:                    __(!!s << 10)_   _dy_____
+          dc = 0x8000 + (dp << 11) + (s ? 1024 : 0) + (dy | 0);                  // the `| 0` shouldn't be necessary but is there as a precaution
+          //console.log('d10-dbg', dp, dy, s, '0x' + dc.toString(16), flt);
+          return String.fromCharCode(dc);
         }
-
-        //
-        // Bits in word:
-        // - 0..9: integer mantissa; values 0..1023
-        // - 10: sign
-        // - 11..14: exponent 0..9 with offset -3 --> -3..+6
-        // - 15: set to signal special values; this bit is also set for some special Unicode characters,
-        //       so we can only set this bit and have particular values in bits 0..14 at the same time
-        //       in order to prevent a collision with those Unicode specials ('surrogates') 
-        //       at 0xD800..0xDFFF.
-        //
-        // alt:                    __(!!s << 10)_   _dy_____
-        dc = 0x8000 + (dp << 11) + (s ? 1024 : 0) + (dy | 0);                  // the `| 0` shouldn't be necessary but is there as a precaution
-        //console.log('d10-dbg', dp, dy, s, '0x' + dc.toString(16), flt);
-        return String.fromCharCode(dc);
       }
     }
-    // fall through!
 
-  // this range of exponents shows up when you handle denormalized zeroes:
-  case -1074:
-  case -1073:
-  case -1072:
-  case -1071:
-  case -1070:
-  case -1069:
-  case -1068:
-  case -1067:
-  case -1066:
-  case -1065:
-  case -1064:
-  case -1063:
-  case -1062:
-  case -1061:
-  case -1060:
-  case -1059:
-  case -1058:
-  case -1057:
-  case -1056:
-  case -1055:
-  case -1054:
-  case -1053:
-  case -1052:
-  case -1051:
-  case -1050:
-  case -1049:
-  case -1048:
-  case -1047:
-  case -1046:
-  case -1045:
-  case -1044:
-  case -1043:
-  case -1042:
-  case -1041:
-  case -1040:
-  case -1039:
-  case -1038:
-  case -1037:
-  case -1036:
-  case -1035:
-  case -1034:
-  case -1033:
-  case -1032:
-  case -1031:
-  case -1030:
-  case -1029:
-  case -1028:
-  case -1027:
-  case -1026:
-  case -1025:
-    if (p < -1024) {
-      // Correct for our process: we actually want the bits in the IEE754 exponent, hence
-      // exponents lower than -1024, a.k.a. *denormalized zeroes*, are treated exactly
-      // like that in our code as well: we will produce leading mantissa ZERO words then.
-      p = -1024;
-    }
-    // fall through
-
-  default:
     // and produce the mantissa so that it's range now is [0..2>: for powers > 0
     // the value y will be >= 1 while for negative powers, i.e. tiny numbers, the
     // value 0 < y < 1.
     var y = flt / Math.pow(2, p);
     y /= 2;                       // we do this in two steps to allow handling even the largest floating point values, which have p=1023: Math.pow(2, p+1) would fail for those!
-    // if (y >= 1) {
-    //   throw new Error('fp float encoding: mantissa above allowed max');
-    // }
 
     var a = '';
     var b = y;       // alt: y - 1, but that only gives numbers 0 < b < 1 for p > 0
-    // if (b < 0) {
-    //   throw new Error('fp encoding: negative mantissa');
-    // }
-    // if (b === 0) {
-    //   throw new Error('fp encoding: ZERO mantissa');
-    // }
 
     // and show the Unicode character codes for debugging/diagnostics:
     //var dbg = [0 /* Note: this slot will be *correctly* filled at the end */];
@@ -371,14 +233,18 @@ function encode_fp_value2(flt) {
     // - +0    (positive zero)
     //
     --i;
-    // if (i > 3) {
-    //   throw new Error('fp encode length too large');
-    // }
     var h = p + 1024 + s + (i << 13 /* i * 8192 */ );   // brackets needed as + comes before <<   :-(
     a = String.fromCharCode(h) + a;
     //dbg[0] = h;
     //console.log('dbg @ end', i, h, flt, dbg, s, p, y, b, '0x' + h.toString(16));
     return a;
+  } else {
+    // -Inf / +Inf
+    if (flt > 0) {
+      return String.fromCharCode(FPC_ENC_POSITIVE_INFINITY);
+    } else {
+      return String.fromCharCode(FPC_ENC_NEGATIVE_INFINITY);
+    }
   }
 }
 
@@ -389,5 +255,5 @@ function encode_fp_value2(flt) {
 
 
 
-console.info('fpcvt-alt1 loaded');
+console.info('fpcvt-alt6 loaded');
 

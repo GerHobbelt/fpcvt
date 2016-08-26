@@ -36,7 +36,7 @@ function decode_fp_value2(s, opt) {
   // 
   // which reside in the other ranges that we DO employ for our own nefarious encoding purposes!
   case 0xD800:
-    throw new Error('illegal fp encoding value in 0xDXXX unicode range');
+    throw new Error('illegal fp encoding value in 0xD8xx-0xDFxx unicode range');
 
   case 0xF800:
     // specials:
@@ -57,7 +57,7 @@ function decode_fp_value2(s, opt) {
       return NaN;
 
     default:
-      throw new Error('illegal fp encoding value in 0xFXXX unicode range');
+      throw new Error('illegal fp encoding value in 0xF8xx-0xFFxx unicode range');
     }
     break;
 
@@ -118,9 +118,9 @@ function decode_fp_value2(s, opt) {
     //console.log('decode-short-0C', ds, dm, '0x' + dp.toString(16), dp >>> 11, c0, '0x' + c0.toString(16));
     dp >>>= 11;
     if (dp >= 15) {
-      throw new Error('illegal fp encoding value in 0xF8XX-0xFFXX unicode range');
+      throw new Error('illegal fp encoding value in 0xF8xx-0xFFxx unicode range');
     }
-    dp -= 3 + 2 + 2;            // like above, but now also compensate for exponent bumping (0xA --> 0xC, ...)
+    dp -= 3 + 2 + 1;            // like above, but now also compensate for exponent bumping (0xB --> 0xC, ...)
 
     var sflt = dm * Math.pow(10, dp);
     if (ds) {
