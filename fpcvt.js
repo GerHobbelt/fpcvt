@@ -310,12 +310,16 @@ function encode_fp_value(flt) {
 
     // extract power from fp value    (WARNING: MSIE does not support log2(), see MDN!)
     var exp2 = Math.log2(flt);
-    var p = exp2 | 0;  // --> +1023..-1024, pardon!, -1074 (!!!)
-    if (p < -1024) {
+    var p = exp2 | 0;  // --> +1023..-1024, pardon!, +1024..-1074 (!!!)
+    if (p < -1023) {
       // Correct for our process: we actually want the bits in the IEE754 exponent, hence
       // exponents lower than -1024, a.k.a. *denormalized zeroes*, are treated exactly
       // like that in our code as well: we will produce leading mantissa ZERO words then.
-      p = -1024;
+      // 
+      // We also need to process the exponent -1024 specially as we have another edge case at p=+1024
+      // which we do not want to check for separately: maximum performance means we want the least
+      // number of conditional checks (~ if/else constructs) in our execution path!
+      p = -1023;
     } else {
       // Note:
       // We encode a certain range and type of values specially as that will deliver shorter Unicode
@@ -421,14 +425,14 @@ function encode_fp_value(flt) {
         // Offset the exponent so it's always positive when encoded:
         dp += 2;
         // `dy < 1024` is not required, theoretically, but here as a precaution:
-        if (dp >= 0 && dp <= 13 /* (L= 11 + 3) */ /* && dy < 1024 */) {
+        if (dp >= 0 && dp < 14 /* (L= 11 + 3) */ /* && dy < 1024 */) {
           // short float eligible value for sure!
           var dc;
 
           // make sure to skip the 0xD8xx range by bumping the exponent:
-          if (dp > 10) {
-            // dp = 0xA --> dp = 0xC, ...
-            dp += 2;
+          if (dp >= 11) {
+            // dp = 0xB --> dp = 0xC, ...
+            dp++;
           }
 
           //
@@ -443,6 +447,12 @@ function encode_fp_value(flt) {
           //
           // alt:                    __(!!s << 10)_   _dy_____
           dc = 0x8000 + (dp << 11) + (s ? 1024 : 0) + (dy | 0);                  // the `| 0` shouldn't be necessary but is there as a precaution
+          if (dc >= 0xF800) {
+            throw new Error('fp decimal short float encoding: internal error: beyond 0xF800');
+          }
+          if (dc >= 0xD800 && dc < 0xE000) {
+            throw new Error('fp decimal short float encoding: internal error: landed in 0xD8xx block');
+          }
           //console.log('d10-dbg', dp, dy, s, '0x' + dc.toString(16), flt);
           return String.fromCharCode(dc);
         }
@@ -452,8 +462,9 @@ function encode_fp_value(flt) {
     // and produce the mantissa so that it's range now is [0..2>: for powers > 0
     // the value y will be >= 1 while for negative powers, i.e. tiny numbers, the
     // value 0 < y < 1.
-    var y = flt / Math.pow(2, p);
-    y /= 2;                       // we do this in two steps to allow handling even the largest floating point values, which have p=1023: Math.pow(2, p+1) would fail for those!
+    p--;                          // drop power p by 1 so that we can safely encode p=+1024; the lower bound is already limited to -1023 instead of -1024 so we're good...
+    var y = flt / Math.pow(2, p); 
+    y /= 2;                       // we do this in two steps to allow handling even the largest floating point values, which have p=1024: Math.pow(2, p) would fail for those!
     if (y >= 1) {
       throw new Error('fp float encoding: mantissa above allowed max');
     }
@@ -506,6 +517,9 @@ function encode_fp_value(flt) {
       throw new Error('fp encode length too large');
     }
     var h = p + 1024 + s + (i << 13 /* i * 8192 */ );   // brackets needed as + comes before <<   :-(
+    if (h >= 0xF800) {
+      throw new Error('fp decimal long float encoding: internal error: initial word beyond 0xD800');
+    }
     a = String.fromCharCode(h) + a;
     //dbg[0] = h;
     //console.log('dbg @ end', i, h, flt, dbg, s, p, y, b, '0x' + h.toString(16));
@@ -577,7 +591,7 @@ function decode_fp_value(s, opt) {
   // 
   // which reside in the other ranges that we DO employ for our own nefarious encoding purposes!
   case 0xD800:
-    throw new Error('illegal fp encoding value in 0xDXXX unicode range');
+    throw new Error('illegal fp encoding value in 0xD8xx-0xDFxx unicode range');
 
   case 0xF800:
     // specials:
@@ -598,7 +612,7 @@ function decode_fp_value(s, opt) {
       return NaN;
 
     default:
-      throw new Error('illegal fp encoding value in 0xFXXX unicode range');
+      throw new Error('illegal fp encoding value in 0xF8xx-0xFFxx unicode range');
     }
     break;
 
@@ -607,6 +621,33 @@ function decode_fp_value(s, opt) {
   case 0x9000:
   case 0x9800:
   case 0xA000:
+    // 'human values' encoded as 'short floats':
+    //
+    // Bits in word:
+    // - 0..9: integer mantissa; values 0..1023
+    // - 10: sign
+    // - 11..14: exponent 0..9 with offset -3 --> -3..+6
+    // - 15: set to signal special values; this bit is also set for some special Unicode characters,
+    //       so we can only set this bit and have particular values in bits 0..14 at the same time
+    //       in order to prevent a collision with those Unicode specials at 0xD800..0xDFFF.
+    //
+    var dm = c0 & 0x03FF;      // 10 bits
+    var ds = c0 & 0x0400;      // bit 10 = sign
+    var dp = c0 & 0x7800;      // bits 11..14: exponent
+
+    //console.log('decode-short-0', ds, dm, '0x' + dp.toString(16), dp >>> 11, c0, '0x' + c0.toString(16));
+    dp >>>= 11;
+    dp -= 3 + 2;
+
+    // Because `dm * Math.pow(10, dp)` causes bitrot in LSB (so that, for example, input value 0.0036 becomes 0..0036000000000000003)
+    // we reproduce the value another way, which does *not* produce the bitrot in the LSBit of the *decimal* mantissa:
+    var sflt = dm / Math.pow(10, -dp);
+    if (ds) {
+      sflt = -sflt;
+    }
+    //console.log('decode-short-1', sflt, ds, dm, dp, c0, '0x' + c0.toString(16));
+    return sflt;
+
   case 0xA800:
   case 0xB000:
   case 0xB800:
@@ -659,9 +700,9 @@ function decode_fp_value(s, opt) {
     //console.log('decode-short-0C', ds, dm, '0x' + dp.toString(16), dp >>> 11, c0, '0x' + c0.toString(16));
     dp >>>= 11;
     if (dp >= 15) {
-      throw new Error('illegal fp encoding value in 0xF8XX-0xFFXX unicode range');
+      throw new Error('illegal fp encoding value in 0xF8xx-0xFFxx unicode range');
     }
-    dp -= 3 + 2 + 2;            // like above, but now also compensate for exponent bumping (0xA --> 0xC, ...)
+    dp -= 3 + 2 + 1;            // like above, but now also compensate for exponent bumping (0xB --> 0xC, ...)
 
     var sflt = dm * Math.pow(10, dp);
     if (ds) {
