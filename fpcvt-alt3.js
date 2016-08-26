@@ -86,7 +86,7 @@ function encode_fp_value4(flt) {
   // The range <1e10..1e-3] can be encoded as short float when the value matches a few conditions:
   // (Do note that the exponents tested here in this switch/case are powers-of-TWO and thus have a
   // wider range compared to the decimal powers -3..+10)
-  if (p >= -9 /* Math.log2(1e-3) ~ -9.966 */ && p < 44 /* Highest encodable number: Math.log2(999e10) ~ 43.18 */ ) {
+  if (p >= -9 /* Math.log2(1e-3) ~ -9.966 */ && p < 46 /* Highest encodable number: Math.log2(999e11) ~ 46.51 */ ) {
     // if (!isFinite(flt)) {
     //   throw new Error('fp encoding: internal failure in short float: not a finite number');
     // }
@@ -109,7 +109,7 @@ function encode_fp_value4(flt) {
     // and comparison to further check conditions suitable for short float encoding.
     //
     // `dy < 1024` is not required, theoretically, but here as a precaution:
-    if (dp >= -2 && dp <= 10 /* (10 + 3) - 2 /* && dy < 1024 */) {
+    if (dp >= -2 && dp <= 11 /* (L= 11 + 3) - o=2 */ /* && dy < 1024 */) {
       var chk = dy % 1;
       //console.log('decimal float eligible? A:', flt, dy, chk, dp);
       if (chk === 0) {                     // alt check:   `(dy | 0) === dy`
@@ -173,18 +173,18 @@ function encode_fp_value4(flt) {
         // let's look at the bit patterns available for our decimal power,
         // assuming sign and a mantissa good for 3 decimal significant digits
         // is placed in the low bits zone (3 decimal digits takes 10 bits):
-        // This gives us 0x80-0xD8 ~ $1000 0sxx .. $1100 1sxx 
-        // + 0xE0-0xFE ~ $1110 0sxx .. $1111 0sxx
-        // --> power values 0x10..0x19 minus 0x10 --> [0x00..0x09] --> 10 exponent values.
-        // + 0x1C..0x1E minus 0x1C --> [0x00..0x02]+offset=10 --> 3 extra values! 
+        // This gives us 0x80-0xD0 ~ $1000 0sxx .. $1101 0sxx 
+        // + 0xE0-0xF0 ~ $1110 0sxx .. $1111 0sxx
+        // --> power values 0x10..0x1A minus 0x10 --> [0x00..0x0A] --> 11 exponent values.
+        // + 0x1C..0x1E minus 0x1C --> [0x00..0x02]+offset=11 --> 3 extra values! 
         //
         // As we want to be able to store 'millis' and 'millions' at least,
         // there's plenty room as that required range is 10 (6+1+3: don't 
-        // forget about the power value 0!). With this range, it's just feasible
-        // to also support *billions* (1E9) thanks to the extra range 0x1C..0x1E
-        // in Unicode code points 0xE000..0xFEFF.
+        // forget about the power value 0!). With this range, it's feasible
+        // to also support all high *billions* (1E9) as well thanks to the extra range 0x1C..0x1E
+        // in Unicode code points 0xE000..0xF7FF.
         // 
-        // As we choose to only go up to 0xF7FF, we keep 0xF80..0xFFFF as a 
+        // As we choose to only go up to 0xF7FF, we keep 0xF800..0xFFFF as a 
         // 'reserved for future use' range.
         // 
         // ---
@@ -196,7 +196,7 @@ function encode_fp_value4(flt) {
         var dc;
 
         // make sure to skip the 0xD8xx range by bumping the exponent:
-        if (dp > 9) {
+        if (dp > 10) {
           // dp = 0xA --> dp = 0xC, ...
           dp += 2;
         }

@@ -71,6 +71,7 @@ function decode_fp_value2(s, opt) {
   case 0xB800:
   case 0xC000:
   case 0xC800:
+  case 0xD000:
     // 'human values' encoded as 'short floats':
     //
     // Bits in word:
@@ -116,10 +117,10 @@ function decode_fp_value2(s, opt) {
 
     //console.log('decode-short-0C', ds, dm, '0x' + dp.toString(16), dp >>> 11, c0, '0x' + c0.toString(16));
     dp >>>= 11;
-    dp -= 3 + 2 + 2;            // like above, but now also compensate for exponent bumping (0xA --> 0xC, ...)
-    if (dp > 12) {
+    if (dp >= 15) {
       throw new Error('illegal fp encoding value in 0xF8XX-0xFFXX unicode range');
     }
+    dp -= 3 + 2 + 2;            // like above, but now also compensate for exponent bumping (0xA --> 0xC, ...)
 
     var sflt = dm * Math.pow(10, dp);
     if (ds) {

@@ -81,6 +81,8 @@ function decode_fp_value3(s, opt) {
       return sflt;
     } else if (c0 >= 0xE000 && c0 < 0xF800) {
       // 'short float' range 0xE000..0xF7FF
+      //
+      // (0xF800..0xFFFF: reserved for future use)
 
       // 'human values' encoded as 'short floats':
       //
@@ -98,10 +100,10 @@ function decode_fp_value3(s, opt) {
 
       //console.log('decode-short-0C', ds, dm, '0x' + dp.toString(16), dp >>> 11, c0, '0x' + c0.toString(16));
       dp >>>= 11;
-      dp -= 3 + 2 + 2;            // like above, but now also compensate for exponent bumping (0xA --> 0xC, ...)
-      if (dp > 12) {
+      if (dp >= 15) {
         throw new Error('illegal fp encoding value in 0xF8XX-0xFFXX unicode range');
       }
+      dp -= 3 + 2 + 2;            // like above, but now also compensate for exponent bumping (0xA --> 0xC, ...)
 
       var sflt = dm * Math.pow(10, dp);
       if (ds) {
