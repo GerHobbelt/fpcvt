@@ -517,7 +517,7 @@ function encode_fp_value(flt) {
       throw new Error('fp encode length too large');
     }
     var h = p + 1024 + s + (i << 13 /* i * 8192 */ );   // brackets needed as + comes before <<   :-(
-    if (h >= 0xF800) {
+    if (h >= 0xD800) {
       throw new Error('fp decimal long float encoding: internal error: initial word beyond 0xD800');
     }
     a = String.fromCharCode(h) + a;
@@ -791,8 +791,12 @@ function decode_fp_value(s, opt) {
       break;
     }
     //console.log('decode-normal-1', vs, m, p, opt.consumed_length);
+
+    // we do this in two steps to allow handling even the largest floating point values, which have p=1023: Math.pow(2, p+1) would fail for those!
+    // 
+    // WARNING: The order of execution of this times-2 and the next power-of-2 multiplication is essential to not drop any LSBits for denormalized zero values!
+    m *= 2;                       
     m *= Math.pow(2, p);
-    m *= 2;                       // we do this in two steps to allow handling even the largest floating point values, which have p=1023: Math.pow(2, p+1) would fail for those!
     if (vs) {
       m = -m;
     }
