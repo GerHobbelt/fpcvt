@@ -80,18 +80,9 @@ function encode_fp_value2(flt) {
     p--;                          // drop power p by 1 so that we can safely encode p=+1024 (and p=+1023)
     var y = flt / Math.pow(2, p);
     y /= 4;                       // we do this in two steps to allow handling even the largest floating point values, which have p>=1023: Math.pow(2, p + 1) would fail for those!
-    if (y >= 1) {
-      throw new Error('fp float encoding: mantissa above allowed max for ' + flt);
-    }
 
     var a = '';
     var b = y;
-    if (b < 0) {
-      throw new Error('fp encoding: negative mantissa for ' + flt);
-    }
-    if (b === 0) {
-      throw new Error('fp encoding: ZERO mantissa for ' + flt);
-    }
 
     // and show the Unicode character codes for debugging/diagnostics:
     //var dbg = [0 /* Note: this slot will be *correctly* filled at the end */];
@@ -124,16 +115,7 @@ function encode_fp_value2(flt) {
     //       in order to prevent a collision with those Unicode specials at 0xF900..0xFFFF.
     //
     --i;
-    if (i > 3) {
-      throw new Error('fp encode length too large');
-    }
-    if (b) {
-      console.warn('lingering mantissa remainder for near-INF: ', b, inf);
-    }
     var h = 0xF800 + p - 1020 + (s >> 12 - 7) + (i << 5);   // brackets needed as + comes before <<   :-(
-    if (h < 0xF800 || h >= 0xF900) {
-      throw new Error('fp decimal long float near-inifinity number encoding: internal error: initial word out of range');
-    }
     a = String.fromCharCode(h) + a;
     //dbg[0] = h;
     //console.log('dbg @ end', i, h, flt, dbg, s, p, y, b, '0x' + h.toString(16));
