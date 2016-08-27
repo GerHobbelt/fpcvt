@@ -2,7 +2,7 @@
 
 
 // This function is very close to `decode_fp_value()` (fpcvt.js), where the only change is following 
-// the findings from test0011 where a large-ish set (30+ only!) cases in a `switch/case` 
+// the findings from test0006 where a large-ish set (30+ only!) cases in a `switch/case` 
 // causes a drop in performance in Chrome V8 engines as that engine doesn't convert a
 // switch/case to a jump table like the other browsers do (MSIE Edge is much faster thanks
 // to this, for example, but Mozilla FireFox also clearly performs a jump-table optimization

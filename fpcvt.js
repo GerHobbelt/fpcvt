@@ -17,8 +17,11 @@
 // The modulo 0x8000 takes 4 characters for a mantissa of 52 bits, while the same goes
 // for modulo 0x4000.
 // So we either have the upper bit at mask 0x4000 available on every char or we have
-// some spare bits in the last word...
+// some spare bits in the last word... We decide the few spare bits at the end is more beneficiary
+// for our purposes as that gives us a little slack at least when encoding mantissas
+// for high exponent values, etc.
 const FPC_ENC_MODULO = 0x8000;
+const FPC_ENC_MODULO_RECIPROCAL = 1 / FPC_ENC_MODULO;
 const FPC_ENC_MAXLEN = (function () {
   var l = Math.log(Math.pow(2, 53)) / Math.log(FPC_ENC_MODULO);   // number of chars = words required to store worst case fp values
   l += 1;
@@ -684,7 +687,7 @@ function decode_fp_value(s, opt) {
   // 
   // which reside in the other ranges that we DO employ for our own nefarious encoding purposes!
   case 0xD800:
-    throw new Error('illegal fp encoding value in 0xD8xx-0xDFxx unicode range');
+    throw new Error('illegal fp encoding value in 0xD800-0xDFFF unicode range');
 
   case 0xF800:
     // specials:
@@ -797,7 +800,7 @@ function decode_fp_value(s, opt) {
         return NaN;
 
       default:
-        throw new Error('illegal fp encoding value in 0xF9xx-0xFFxx unicode range');
+        throw new Error('illegal fp encoding value in 0xF900-0xFFFF Unicode range');
       }
     }
     break;
