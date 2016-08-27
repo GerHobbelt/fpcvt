@@ -1,0 +1,16 @@
+{
+  "presets": ["latest"],
+/*
+  "plugins": [
+  	"dead-code-elimination",
+   	"constant-folding"
+  ],
+*/
+  "plugins": [
+   	"./lib/babel-plugin-transform-performance-optimizations",
+  	"transform-undefined-to-void",
+  	"transform-remove-console",
+  	"transform-remove-debugger",
+  	"transform-strict-mode"
+  ]
+}
