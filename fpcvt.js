@@ -514,6 +514,52 @@ function encode_fp_value(flt) {
         // is used to represent special IEEE754 values such as NaN or Infinity.
         // 
         // ---
+        //
+        // Note: we now have our own set of 'denormalized' floating point values:
+        // given the way we calculate decimal exponent and mantissa (by multiplying
+        // with 1000), we will always have a minimum mantissa value of +100, as
+        // any *smaller* value would have produced a lower *exponent*!
+        // 
+        // Next to that, note that we allocate a number of *binary bits* for the
+        // mantissa, which can never acquire a value of +!000 or larger as there
+        // the same reasoning applies: if such a value were possible, the exponent
+        // would have been *raised* by +1 and the mantissa would have been reduced
+        // to land within the +100..+999 range once again.
+        // 
+        // This means that a series of sub-ranges cannot ever be produced by this 
+        // function:
+        // 
+        // - 0x8000      .. 0x8000+  99    (exponent '0', sign bit CLEAR) 
+        // - 0x8000+1000 .. 0x8000+1023 
+        // - 0x8400      .. 0x8400+  99    (exponent '0', sign bit SET) 
+        // - 0x8400+1000 .. 0x8400+1023 
+        // - 0x8800      .. 0x8800+  99    (exponent '1', sign bit CLEAR) 
+        // - 0x8800+1000 .. 0x8800+1023 
+        // - 0x8C00      .. 0x8C00+  99    (exponent '1', sign bit SET) 
+        // - 0x8C00+1000 .. 0x8C00+1023 
+        // - ... etc ...
+        // 
+        // One might be tempted to re-use these 'holes' in the output for other
+        // purposes, but it's faster to have any special codes use their
+        // own 'reserved range' as that would only take one extra conditional
+        // check and since we now know (since perf test0006) that V8 isn't
+        // too happy about long switch/case constructs, we are better off, 
+        // performance wise, to strive for the minimum number of comparisons, 
+        // rather than striving for a maximum fill of the available Unicode
+        // space.
+        // 
+        // BTW: We could have applied this same reasoning when we went looking for
+        // a range to use to encode those pesky near-infinity high exponent
+        // floating point values (p >= 1023), but at the time we hadn't 
+        // realized yet that we would have these (large) holes in the output 
+        // range.
+        // Now that we know these exist, we *might* consider filling one of
+        // those 'holes' with those high-exponent values as those really only
+        // take 5 bits (2 bits for exponent: 1023 or 1024, 1 bit for sign,
+        // 2 bits for length) while they currently usurp the range 0xF800..0xF8FF
+        // (with large holes in there as well!)
+        // 
+        // ---
         // 
         // Offset the exponent so it's always positive when encoded:
         dp += 2;
