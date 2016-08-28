@@ -433,9 +433,12 @@ function encode_fp_value(flt) {
       if (dy > 1000) {
         throw new Error('fp decimal short float encoding: 3 digits check');
       }
-      var chk = dy % 1;
-      //console.log('decimal float eligible? A:', flt, dy, chk, dp);
-      if (chk === 0) {                     // alt check:   `(dy | 0) === dy`
+      
+      // See performance test [test0012-modulo-vs-integer-check] for a technique comparison: 
+      // this is the fastest on V8/Edge and second-fastest on FF. 
+      var chk = dy | 0;     
+      //console.log('decimal float eligible? A:', flt, dy, chk, chk === dy, dp);
+      if (chk === dy) {                     // alt check:   `(dy % 1) === 0`
         // this input value is potentially eligible for 'short decimal float encoding'...
         //
         // *short* decimal floats take 13-14 bits (10+~4) at 
@@ -607,6 +610,8 @@ function encode_fp_value(flt) {
       throw new Error('fp float encoding: mantissa above allowed max for ' + flt);
     }
 
+    // See performance test [test0008-array-join-vs-string-add]: string
+    // concatenation is the fastest cross-platform.
     var a = '';
     var b = y;       // alt: y - 1, but that only gives numbers 0 < b < 1 for p > 0
     if (b < 0) {
