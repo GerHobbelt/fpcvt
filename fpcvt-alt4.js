@@ -36,7 +36,7 @@ function decode_fp_value2(s, opt) {
   // 
   // which reside in the other ranges that we DO employ for our own nefarious encoding purposes!
   case 0xD800:
-    throw new Error('illegal fp encoding value in 0xD8xx-0xDFxx unicode range');
+    throw new Error('illegal fp encoding value in 0xD800-0xDFFF unicode range');
 
   case 0xF800:
     // specials:
@@ -159,7 +159,7 @@ function decode_fp_value2(s, opt) {
         return NaN;
 
       default:
-        throw new Error('illegal fp encoding value in 0xF9xx-0xFFxx unicode range');
+        throw new Error('illegal fp encoding value in 0xF900-0xFFFF Unicode range');
       }
     }
     break;

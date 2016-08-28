@@ -356,6 +356,8 @@ function encode_fp_value(flt) {
         throw new Error('fp float encoding: mantissa above allowed max for ' + flt);
       }
 
+      // See performance test [test0008-array-join-vs-string-add]: string
+      // concatenation is the fastest cross-platform.
       var a = '';
       var b = y;
       if (b < 0) {

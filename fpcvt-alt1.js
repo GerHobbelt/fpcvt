@@ -81,6 +81,8 @@ function encode_fp_value2(flt) {
     var y = flt / Math.pow(2, p);
     y /= 4;                       // we do this in two steps to allow handling even the largest floating point values, which have p>=1023: Math.pow(2, p + 1) would fail for those!
 
+    // See performance test [test0008-array-join-vs-string-add]: string
+    // concatenation is the fastest cross-platform.
     var a = '';
     var b = y;
 
@@ -225,9 +227,11 @@ function encode_fp_value2(flt) {
     //
     // `dy < 1024` is not required, theoretically, but here as a precaution:
     if (dp >= -2 && dp < 12 /* (L= 11 + 3) - o=2 */ /* && dy < 1024 */) {
-      var chk = dy % 1;
-      //console.log('decimal float eligible? A:', flt, dy, chk, dp);
-      if (chk === 0) {                     // alt check:   `(dy | 0) === dy`
+      // See performance test [test0012-modulo-vs-integer-check] for a technique comparison: 
+      // this is the fastest on V8/Edge and second-fastest on FF. 
+      var chk = dy | 0;     
+      //console.log('decimal float eligible? A:', flt, dy, chk, chk === dy, dp);
+      if (chk === dy) {                     // alt check:   `(dy % 1) === 0`
         // this input value is potentially eligible for 'short decimal float encoding'...
         //
         // *short* decimal floats take 13-14 bits (10+~4) at 
@@ -449,6 +453,8 @@ function encode_fp_value2(flt) {
     p++;                          // increase power p by 1 so that we get a mantissa in the range [0 .. +1>; this causes trouble when the exponent is very high, hence those values are handled elsewhere
     var y = flt / Math.pow(2, p);
 
+    // See performance test [test0008-array-join-vs-string-add]: string
+    // concatenation is the fastest cross-platform.
     var a = '';
     var b = y;       // alt: y - 1, but that only gives numbers 0 < b < 1 for p > 0
 

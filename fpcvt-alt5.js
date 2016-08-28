@@ -130,7 +130,7 @@ function decode_fp_value3(s, opt) {
       //console.log('decode-short-0C', ds, dm, '0x' + dp.toString(16), dp >>> 11, c0, '0x' + c0.toString(16));
       dp >>>= 11;
       if (dp >= 15) {
-        throw new Error('illegal fp encoding value in 0xF8xx-0xFFxx unicode range');
+        throw new Error('illegal fp encoding value in 0xF800-0xFFFF unicode range');
       }
       dp -= 3 + 2 + 1;            // like above, but now also compensate for exponent bumping (0xB --> 0xC, ...)
 
@@ -253,7 +253,7 @@ function decode_fp_value3(s, opt) {
           return NaN;
 
         default:
-          throw new Error('illegal fp encoding value in 0xF9xx-0xFFxx unicode range');
+          throw new Error('illegal fp encoding value in 0xF900-0xFFFF Unicode range');
         }
       }
     } else {
