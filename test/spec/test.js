@@ -13,6 +13,7 @@
 
 
 
+    const test_serialization = true;
 
     var data = [];
     var serialized_data = [];
@@ -103,7 +104,7 @@
         }
       }
       // test the ranges which are treated special plus a little *outside* those ranges to detect incorrect handling
-      debugger;
+      //debugger;
 
       // also test the reserve to ensure we cover the entire *decodable* range as wll as the entire *encodable* range!
       //
@@ -156,7 +157,7 @@
       data.length = 30;
       data_length = data.length;
 
-      window.console && console.log('init:: data set:', data.slice(0, 20), '...');
+      typeof console !== 'undefined' && console.log('init:: data set:', data.slice(0, 20), '...');
     }
 
     // serialize / deserialize functions:
@@ -173,7 +174,7 @@
     }
 
     function custom_0(data, len, serialized_data) {
-      debugger;
+      //debugger;
       var dec_opt = {
         consumed_length: 0
       };
@@ -426,6 +427,8 @@
     }
 
 
+    init();
+
 
 		// Custom : v0 ~ REFERENCE CHECKS
     custom_0(data, data_length, serialized_data);
@@ -502,4 +505,4 @@ describe('Give it some context', function () {
 
 
 
-console.error('loaded spec file');
+console.info('loaded spec file');

@@ -1140,8 +1140,23 @@ function __find_fp_radix_hash_settings__() {
       break; 
   } 
   console.log('end: ', a.length, collisions, M, minv, maxv); 
+  return M;
 }
-__find_fp_radix_hash_settings__();
+const FPCVT_LUT_M = __find_fp_radix_hash_settings__();
+
+
+
+function encode_fp_init_decode_lookup_table() {
+
+}
+// mapping floating point value to Unicode character code () to fp value or FALSE
+function encode_fp_init_encode_lookup_table() {
+  
+}
+
+
+
+
 
 
 console.info('fpcvt-alt8 loaded');

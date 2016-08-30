@@ -7,7 +7,9 @@
   ],
 */
   "plugins": [
+/*
    	"./lib/babel-plugin-transform-performance-optimizations",
+*/
   	"transform-undefined-to-void",
   	"transform-remove-console",
   	"transform-remove-debugger",
