@@ -20,7 +20,7 @@
     var serialized_data3 = [];
     var data_length = 0;
 
-    console.clear();
+    // console.clear();
 
     function init() {
       if (data_length) return;
