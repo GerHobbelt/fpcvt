@@ -23,5 +23,9 @@
   "bugs": {
     "url": "https://github.com/GerHobbelt/fpcvt/issues"
   },
-  "homepage": "https://github.com/GerHobbelt/fpcvt#readme"
+  "homepage": "https://github.com/GerHobbelt/fpcvt#readme",
+  "devDependencies": {
+    "gulp": "3.9.1",
+    "gulp-jasmine": "2.4.0"
+  }
 }
