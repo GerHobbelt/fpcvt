@@ -1,0 +1,27 @@
+{
+  "name": "fpcvt",
+  "version": "0.1.0",
+  "description": "serialize/deserialize floating point value to packed Unicode compliant string",
+  "main": "fpcvt.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/GerHobbelt/fpcvt.git"
+  },
+  "keywords": [
+    "serialization",
+    "Unicode",
+    "packed",
+    "converter",
+    "encoder",
+    "decoder"
+  ],
+  "author": "Ger Hobbelt",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/GerHobbelt/fpcvt/issues"
+  },
+  "homepage": "https://github.com/GerHobbelt/fpcvt#readme"
+}
