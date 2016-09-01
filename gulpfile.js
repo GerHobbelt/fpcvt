@@ -5,6 +5,8 @@ var jasmine = require('gulp-jasmine');
 var babel = require('gulp-babel');
 var concat = require('gulp-concat');
 var uglify = require('gulp-uglify');
+var fncallback = require('gulp-fncallback');
+var recast = require('recast');
 
 const tests_concat_filename = 'all_fpcvt_plus_tests.js';
 
@@ -25,6 +27,7 @@ gulp.task('babel', function () {
             babelrc: true,
             compact: false,      // don't nuke my precious formatting! ;-)
         }))
+/*
     		.pipe(uglify({
     			preserveComments: 'all',
     			//output: {
@@ -76,5 +79,17 @@ gulp.task('babel', function () {
 	    			},
 	    		//},
     		}))
+*/
+        .pipe(fncallback(function (file, enc, cb) {
+      		console.log('callback: ', file, enc, this);
+      		cb();
+    		}, function (callback) {
+      		console.log('callback-flush: ', this);
+      		callback();
+    		}))
         .pipe(gulp.dest('test/spec/compiled'));
 }); 
+
+function optimize_me() {
+
+}
