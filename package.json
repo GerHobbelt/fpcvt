@@ -1,6 +1,6 @@
 {
   "name": "fpcvt",
-  "version": "0.1.0",
+  "version": "0.1.1-2",
   "description": "serialize/deserialize floating point value to packed Unicode compliant string",
   "main": "fpcvt.js",
   "scripts": {
