@@ -68,7 +68,8 @@
 // Extra: we might want to consider creating an 'initial guess' helper table
 // to cut down the binary search O(log N) from 15 iterations down to only
 // a single exponent range (N=1000 --> 10 iterations), while we might then
-// be able to use a numeric 
+// be able to use a numeric table index, which means we could then use simple 
+// arrays for both encoding and decoding lookup tables.
 
 
 
