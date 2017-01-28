@@ -1101,7 +1101,7 @@ function encode_fp_init_lookup_tables(low_offsets, high_offsets) {
 
 
 //
-// Code to check the radix hash approach: M=683 @ size=34056
+// Code to check the radix hash approach: M=671 @ size=33435
 //  
 function __find_fp_radix_hash_settings__() {
   var M, B, a, collisions, minv, maxv;
@@ -1113,6 +1113,8 @@ function __find_fp_radix_hash_settings__() {
     collisions = 0; 
     minv = Infinity; 
     maxv = -Infinity; 
+    var Z = B * M;
+    var ZI = Z | 0;
 
     for (var i = -3; i < 15-3; i++) { 
       for (var j = 100; j < 1000; j++) { 
@@ -1121,14 +1123,18 @@ function __find_fp_radix_hash_settings__() {
         maxv = Math.max(v, maxv);
 
         // the hash math under test:
-        var y = (Math.log2(v) - B) * M; 
-        var z = y | 0; 
+        //var y = (Math.log2(v) - B) * M; 
+        //var y = Math.log2(v) * M; 
+        var y = Math.log2(v) * M;
+        y -= Z; 
+        var z = y | 0;
+        //z -= ZI; 
         if (!a[z]) { 
           a[z] = v; 
         } else { 
           collisions++; 
           if (0) { 
-            console.log('collision: ', collisions, i, j, v, y, z, a[z]); 
+            console.log('collision: ', collisions, i, j, v, y, z, a[z], Z); 
           } 
           if (collisions > 20) { 
             break; 
@@ -1139,10 +1145,10 @@ function __find_fp_radix_hash_settings__() {
     if (!collisions) 
       break; 
   } 
-  console.log('end: ', a.length, collisions, M, minv, maxv); 
+  console.log('end: ', a.length, collisions, M, minv, maxv, B, B * M); 
   return M;
 }
-const FPCVT_LUT_M = __find_fp_radix_hash_settings__();
+var FPCVT_LUT_M = __find_fp_radix_hash_settings__();
 
 
 

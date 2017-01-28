@@ -655,8 +655,8 @@ function encode_fp_value(flt) {
     }
     if (b) {}
     var h = p + 1024 + s + (i << 13 /* i * 8192 */); // brackets needed as + comes before <<   :-(
-    if (h >= 0xD800) {
-      throw new Error('fp decimal long float encoding: internal error: initial word beyond 0xD800');
+    if (h >= 0x8000) {
+      throw new Error('fp decimal long float encoding: internal error: initial word beyond 0x8000');
     }
     a = String.fromCharCode(h) + a;
     //dbg[0] = h;
@@ -5166,7 +5166,7 @@ function encode_fp_init_lookup_tables(low_offsets, high_offsets) {
 }
 
 //
-// Code to check the radix hash approach: M=683 @ size=34056
+// Code to check the radix hash approach: M=671 @ size=33435
 //  
 function __find_fp_radix_hash_settings__() {
   var M, B, a, collisions, minv, maxv;
@@ -5178,6 +5178,8 @@ function __find_fp_radix_hash_settings__() {
     collisions = 0;
     minv = Infinity;
     maxv = -Infinity;
+    var Z = B * M;
+    var ZI = Z | 0;
 
     for (var i = -3; i < 15 - 3; i++) {
       for (var j = 100; j < 1000; j++) {
@@ -5186,8 +5188,12 @@ function __find_fp_radix_hash_settings__() {
         maxv = Math.max(v, maxv);
 
         // the hash math under test:
-        var y = (Math.log2(v) - B) * M;
+        //var y = (Math.log2(v) - B) * M; 
+        //var y = Math.log2(v) * M; 
+        var y = Math.log2(v) * M;
+        y -= Z;
         var z = y | 0;
+        //z -= ZI; 
         if (!a[z]) {
           a[z] = v;
         } else {
