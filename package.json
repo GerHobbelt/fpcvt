@@ -25,15 +25,18 @@
   },
   "homepage": "https://github.com/GerHobbelt/fpcvt#readme",
   "devDependencies": {
-    "babel-preset-es2015": "^6.14.0",
-    "babel-preset-latest": "^6.14.0",
+    "babel-plugin-transform-remove-console": "6.8.0",
+    "babel-plugin-transform-remove-debugger": "6.8.0",
+    "babel-plugin-transform-undefined-to-void": "6.8.0",
+    "babel-preset-es2015": "6.22.0",
+    "babel-preset-latest": "6.22.0",
     "gulp": "3.9.1",
-    "gulp-accord": "^0.2.0",
-    "gulp-babel": "^6.1.2",
-    "gulp-concat": "^2.6.0",
+    "gulp-accord": "0.2.0",
+    "gulp-babel": "6.1.2",
+    "gulp-concat": "2.6.1",
     "gulp-fncallback": "github:gerhobbelt/gulp-fncallback",
-    "gulp-jasmine": "2.4.0",
-    "gulp-uglify": "^2.0.0",
-    "recast": "^0.11.12"
+    "gulp-jasmine": "2.4.2",
+    "gulp-uglify": "2.0.1",
+    "recast": "0.11.20"
   }
 }
