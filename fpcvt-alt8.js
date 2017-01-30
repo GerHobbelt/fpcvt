@@ -490,8 +490,8 @@ function encode_fp_value5(flt) {
       console.warn('lingering mantissa remainder for regular FP value: ', b, inf);
     }
     var h = p + 1024 + s + (i << 13 /* i * 8192 */ );   // brackets needed as + comes before <<   :-(
-    if (h >= 0xD800) {
-      throw new Error('fp decimal long float encoding: internal error: initial word beyond 0xD800');
+    if (h >= 0x8000) {
+      throw new Error('fp decimal long float encoding: internal error: initial word beyond 0x8000');
     }
     a = String.fromCharCode(h) + a;
     //dbg[0] = h;
