@@ -219,18 +219,29 @@ function encode_fp_value2(flt) {
     // to fit snugly in the Unicode word range 0x8000..0xC000 or in a larger
     // *decimal float* which spans two words: 13+15 bits.
     var dp = (exp2 * FPC_ENC_LOG2_TO_LOG10 + 1) | 0;
-    var dy = flt / Math.pow(10, dp - 3);    // take mantissa (which is guaranteed to be in range [0.999 .. 0]) and multiply by 1000
-    //console.log('decimal float test:', flt, exp2, exp2 * FPC_ENC_LOG2_TO_LOG10, p, dp, dy);
 
     // first check exponent, only when in range perform the costly modulo operation
     // and comparison to further check conditions suitable for short float encoding.
     //
-    // `dy < 1024` is not required, theoretically, but here as a precaution:
-    if (dp >= -2 && dp < 12 /* (L= 11 + 3) - o=2 */ /* && dy < 1024 */) {
+    // This also prevents a crash for very small numbers (dp <= -307) and speeds up matters for any other values
+    // which won't ever make it into the 'shorthand notation' anyway.
+    if (dp >= -2 && dp < 12 /* (L= 11 + 3) - o=2 */ ) {
+      var dy;
+      var dp_3 = dp - 3;
+      // Because `dy = flt / Math.pow(10, dp - 3)` causes bitrot in `dy` LSB (so that, for example, input value 0.00077 becomes 76.9999999999999)
+      // we produce the `dy` value in such a way that the power-of-10 multiplicant/divisor WILL be an INTEGER number, 
+      // which does *not* produce the bitrot in the LSBit of the *decimal* mantissa `dy` that way:
+      if (dp_3 < 0) {
+        dy = flt * Math.pow(10, -dp_3);    // take mantissa (which is guaranteed to be in range [0.999 .. 0]) and multiply by 1000
+      } else {
+        dy = flt / Math.pow(10, dp_3);     // take mantissa (which is guaranteed to be in range [0.999 .. 0]) and multiply by 1000
+      }
+      //console.log('decimal float test:', flt, exp2, exp2 * FPC_ENC_LOG2_TO_LOG10, p, dp, dy);
+        
       // See performance test [test0012-modulo-vs-integer-check] for a technique comparison: 
       // this is the fastest on V8/Edge and second-fastest on FF. 
       var chk = dy | 0;     
-      //console.log('decimal float eligible? A:', flt, dy, chk, chk === dy, dp);
+      //console.log('decimal float eligible? A:', { flt: flt, dy: dy, chk: chk, eq: chk === dy, dp: dp, exp2: exp2});
       if (chk === dy) {                     // alt check:   `(dy % 1) === 0`
         // this input value is potentially eligible for 'short decimal float encoding'...
         //

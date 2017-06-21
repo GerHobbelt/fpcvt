@@ -1,6 +1,6 @@
 
 
-// A near copy of decode_fp_value3() but with a approach to the optional `opt.consumed_length`
+// A near copy of decode_fp_value3() but with a different approach to the optional `opt.consumed_length`
 // feedback.
 
 
@@ -14,9 +14,12 @@ function decode_fp_value4(s, opt) {
   //console.log('decode task: ', s, s.length, c0, '0x' + c0.toString(16));
 
   // As we expect most encodings to be regular numbers, those will be in 0x0000..0x7FFF and
-  // we don't want to spend the least amount of time in the 'special values' overhead,
+  // we do not want to spend any amount of time in the 'special values' overhead,
   // which would be added overhead if we did check for those *first* instead of *at the same time*
-  // as we do here by looking at the top nibble immediately:
+  // as we do here by looking at the top nibble immediately (Note: This ASSUMES your JS engine (Chrome V8?)
+  // is smart enough to convert this switch/case statement set into a jump table, just like any
+  // decent C-like language compiler would! It turns out not everyone out there is all that smart
+  // yet... Sigh...):
   // 
   // nibble value:
   // 0..7: regular 'long encoding' floating point values. Act as *implicit* NUM opcodes.
