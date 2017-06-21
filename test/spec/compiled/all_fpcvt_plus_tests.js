@@ -414,183 +414,200 @@ function encode_fp_value(flt) {
       // to fit snugly in the Unicode word range 0x8000..0xC000 or in a larger
       // *decimal float* which spans two words: 13+15 bits.
       var dp = exp2 * FPC_ENC_LOG2_TO_LOG10 + 1 | 0;
-      var dy = flt / Math.pow(10, dp - 3); // take mantissa (which is guaranteed to be in range [0.999 .. 0]) and multiply by 1000
-      //console.log('decimal float test:', flt, exp2, exp2 * FPC_ENC_LOG2_TO_LOG10, p, dp, dy);
-      if (dy < 0) {
-        throw new Error('fp decimal short float encoding: negative mantissa');
-      }
-      if (dy === 0) {
-        throw new Error('fp decimal short float encoding: ZERO mantissa');
-      }
-      if (dy > 1000) {
-        throw new Error('fp decimal short float encoding: 3 digits check');
-      }
+      // Prevent crash for very small numbers (dp <= -307) and speeds up matters for any other values
+      // which won't ever make it into the 'shorthand notation' anyway: here we replicate the `dp`
+      // range check you also will see further below:
+      //
+      //     dp += 2;
+      //     if (dp >= 0 && dp < 14 /* (L= 11 + 3) */ ) {
+      if (dp >= -2 && dp < 12) {
+        var dy;
+        var dp_3 = dp - 3;
+        // Because `dy = flt / Math.pow(10, dp - 3)` causes bitrot in `dy` LSB (so that, for example, input value 0.00077 becomes 76.9999999999999)
+        // we produce the `dy` value in such a way that the power-of-10 multiplicant/divisor WILL be an INTEGER number, 
+        // which does *not* produce the bitrot in the LSBit of the *decimal* mantissa `dy` that way:
+        if (dp_3 < 0) {
+          dy = flt * Math.pow(10, -dp_3); // take mantissa (which is guaranteed to be in range [0.999 .. 0]) and multiply by 1000
+        } else {
+          dy = flt / Math.pow(10, dp_3); // take mantissa (which is guaranteed to be in range [0.999 .. 0]) and multiply by 1000
+        }
+        //console.log('decimal float test:', flt, exp2, exp2 * FPC_ENC_LOG2_TO_LOG10, p, dp, dy);
+        if (dy < 0) {
+          throw new Error('fp decimal short float encoding: negative mantissa');
+        }
+        if (dy === 0) {
+          throw new Error('fp decimal short float encoding: ZERO mantissa');
+        }
+        if (dy > 1000) {
+          throw new Error('fp decimal short float encoding: 3 digits check');
+        }
 
-      // See performance test [test0012-modulo-vs-integer-check] for a technique comparison: 
-      // this is the fastest on V8/Edge and second-fastest on FF. 
-      var chk = dy | 0;
-      //console.log('decimal float eligible? A:', flt, dy, chk, chk === dy, dp);
-      if (chk === dy) {
-        // alt check:   `(dy % 1) === 0`
-        // this input value is potentially eligible for 'short decimal float encoding'...
-        //
-        // *short* decimal floats take 13-14 bits (10+~4) at 
-        // 0x8000..0xD7FF + 0xE000..0xF7FF (since we skip the Unicode Surrogate range
-        // at 0xD800.0xDFFF (http://unicodebook.readthedocs.io/unicode_encodings.html#utf-16-surrogate-pairs).
-        // 
-        // Our original design had the requirement (more like a *wish* really)
-        // that 'short floats' have decimal exponent -3..+6 at least and encode
-        // almost all 'human numbers', i.e. values that humans enter regularly
-        // in their data: these values usually only have 2-3 significant
-        // digits so we should be able to encode those in a rather tiny mantissa.
-        // 
-        // The problem then is with encoding decimal fractions as quite many of them
-        // don't fit a low-digit-count *binary* mantissa, e.g. 0.5 or 0.3 are
-        // a nightmare if you want *precise* encoding in a tiny binary mantissa.
-        // The solution we came up with was to multiply the number by a decimal power
-        // of 10 so that 'eligible' decimal fractions would actually look like 
-        // integer numbers: when you multiply by 1000, 0.3 becomes 300 which is
-        // perfectly easy to encode in a tiny mantissa (we would need 9 bits).
-        // 
-        // Then the next problem would be to encode large integers, e.g. 1 million,
-        // in a tiny mantissa: hence we came up with the notion of a *decimal*
-        // *floating* *point* value notation for 'short values': we note the 
-        // power as a decimal rather than a binary power and then define the
-        // mantissa as an integer value from, say, 1..1000, hence 1 million (1e6)
-        // would then be encoded as (power=6,mantissa=1), for example.
-        // 
-        // It is more interesting to look at values like 0.33 or 15000: the latter
-        // SHOULD NOT be encoded as (power=4,mantissa=1.5) because that wouldn't work,
-        // but instead the latter should be encoded as (power=3,mantissa=15) to
-        // ensure we get a small mantissa.
-        // As we noted before that 'human values' have few significant digits in
-        // the decimal value, the key is to multiply the value with a decimal 
-        // power until the significant digits are in the integer range, i.e. if
-        // we expect to encode 3-digit values, we 'shift the decimal power by +3' 
-        // so that the mantissa, previously in the range 0..1, now will be in the
-        // range 0..1e3, hence input value 0.33 becomes 0.33e0, shifted by 
-        // decimal power +3 this becomes 330e-3 (330 * 10e-3 === 0.330 === 0.33e0),
-        // which can be encoded precisely in a 9-bit mantissa.
-        // Ditto for example value 15000: while the binary floating point would
-        // encode this as the equivalent of 0.15e6, we transform this into 150e3,
-        // which fits in a 9 bit mantissa as well.
-        // 
-        // ---
-        // 
-        // Now that we've addressed the non-trivial 'decimal floating point' 
-        // concept from 'short float notation', we can go and check how many 
-        // decimal power values we can store: given that we need to *skip*
-        // the Unicode Surrogate ranges (High and Low) at 0xD800..0xDFFF, plus
-        // the Unicode specials at the 0xFFF0..0xFFFF range we should look at
-        // the available bit patterns here... (really we only would be bothered
-        // about 0xFFFD..0xFFFF, but it helps us in other ways to make this 
-        // range a wee little wider: then we can use those code points to 
-        // store the special floating point values NaN, Inf, etc.)
-        // 
-        // For 'short floats' we have the code range 0x8000..0xFFFF, excluding
-        // those skip ranges, i.e. bit15 is always SET for 'short float'. Now
-        // let's look at the bit patterns available for our decimal power,
-        // assuming sign and a mantissa good for 3 decimal significant digits
-        // is placed in the low bits zone (3 decimal digits takes 10 bits):
-        // This gives us 0x80-0xD0 ~ $1000 0sxx .. $1101 0sxx 
-        // + 0xE0-0xF0 ~ $1110 0sxx .. $1111 0sxx
-        // --> power values 0x10..0x1A minus 0x10 --> [0x00..0x0A] --> 11 exponent values.
-        // + 0x1C..0x1E minus 0x1C --> [0x00..0x02]+offset=11 --> 3 extra values! 
-        //
-        // As we want to be able to store 'millis' and 'millions' at least,
-        // there's plenty room as that required range is 10 (6+1+3: don't 
-        // forget about the power value 0!). With this range, it's feasible
-        // to also support all high *billions* (1E9) as well thanks to the extra range 0x1C..0x1E
-        // in Unicode code points 0xE000..0xF7FF.
-        // 
-        // As we choose to only go up to 0xF7FF, we keep 0xF800..0xFFFF as a 
-        // 'reserved for future use' range. From that reserved range, we use
-        // the range 0xF800..0xF8FF to represent floating point numbers with 
-        // very high exponent values (p >= 1020), while the range 0xFFF0..0xFFF4
-        // is used to represent special IEEE754 values such as NaN or Infinity.
-        // 
-        // ---
-        //
-        // Note: we now have our own set of 'denormalized' floating point values:
-        // given the way we calculate decimal exponent and mantissa (by multiplying
-        // with 1000), we will always have a minimum mantissa value of +100, as
-        // any *smaller* value would have produced a lower *exponent*!
-        // 
-        // Next to that, note that we allocate a number of *binary bits* for the
-        // mantissa, which can never acquire a value of +!000 or larger as there
-        // the same reasoning applies: if such a value were possible, the exponent
-        // would have been *raised* by +1 and the mantissa would have been reduced
-        // to land within the +100..+999 range once again.
-        // 
-        // This means that a series of sub-ranges cannot ever be produced by this 
-        // function:
-        // 
-        // - 0x8000      .. 0x8000+  99    (exponent '0', sign bit CLEAR) 
-        // - 0x8000+1000 .. 0x8000+1023 
-        // - 0x8400      .. 0x8400+  99    (exponent '0', sign bit SET) 
-        // - 0x8400+1000 .. 0x8400+1023 
-        // - 0x8800      .. 0x8800+  99    (exponent '1', sign bit CLEAR) 
-        // - 0x8800+1000 .. 0x8800+1023 
-        // - 0x8C00      .. 0x8C00+  99    (exponent '1', sign bit SET) 
-        // - 0x8C00+1000 .. 0x8C00+1023 
-        // - ... etc ...
-        // 
-        // One might be tempted to re-use these 'holes' in the output for other
-        // purposes, but it's faster to have any special codes use their
-        // own 'reserved range' as that would only take one extra conditional
-        // check and since we now know (since perf test0006) that V8 isn't
-        // too happy about long switch/case constructs, we are better off, 
-        // performance wise, to strive for the minimum number of comparisons, 
-        // rather than striving for a maximum fill of the available Unicode
-        // space.
-        // 
-        // BTW: We could have applied this same reasoning when we went looking for
-        // a range to use to encode those pesky near-infinity high exponent
-        // floating point values (p >= 1023), but at the time we hadn't 
-        // realized yet that we would have these (large) holes in the output 
-        // range.
-        // Now that we know these exist, we *might* consider filling one of
-        // those 'holes' with those high-exponent values as those really only
-        // take 5 bits (2 bits for exponent: 1023 or 1024, 1 bit for sign,
-        // 2 bits for length) while they currently usurp the range 0xF800..0xF8FF
-        // (with large holes in there as well!)
-        // 
-        // ---
-        // 
-        // Offset the exponent so it's always positive when encoded:
-        dp += 2;
-        // `dy < 1024` is not required, theoretically, but here as a precaution:
-        if (dp >= 0 && dp < 14 /* (L= 11 + 3) */ /* && dy < 1024 */) {
-            // short float eligible value for sure!
-            var dc;
+        // See performance test [test0012-modulo-vs-integer-check] for a technique comparison: 
+        // this is the fastest on V8/Edge and second-fastest on FF. 
+        var chk = dy | 0;
+        //console.log('decimal float eligible? A:', { flt: flt, dy: dy, chk: chk, eq: chk === dy, dp: dp, exp2: exp2});
+        if (chk === dy) {
+          // alt check:   `(dy % 1) === 0`
+          // this input value is potentially eligible for 'short decimal float encoding'...
+          //
+          // *short* decimal floats take 13-14 bits (10+~4) at 
+          // 0x8000..0xD7FF + 0xE000..0xF7FF (since we skip the Unicode Surrogate range
+          // at 0xD800.0xDFFF (http://unicodebook.readthedocs.io/unicode_encodings.html#utf-16-surrogate-pairs).
+          // 
+          // Our original design had the requirement (more like a *wish* really)
+          // that 'short floats' have decimal exponent -3..+6 at least and encode
+          // almost all 'human numbers', i.e. values that humans enter regularly
+          // in their data: these values usually only have 2-3 significant
+          // digits so we should be able to encode those in a rather tiny mantissa.
+          // 
+          // The problem then is with encoding decimal fractions as quite many of them
+          // don't fit a low-digit-count *binary* mantissa, e.g. 0.5 or 0.3 are
+          // a nightmare if you want *precise* encoding in a tiny binary mantissa.
+          // The solution we came up with was to multiply the number by a decimal power
+          // of 10 so that 'eligible' decimal fractions would actually look like 
+          // integer numbers: when you multiply by 1000, 0.3 becomes 300 which is
+          // perfectly easy to encode in a tiny mantissa (we would need 9 bits).
+          // 
+          // Then the next problem would be to encode large integers, e.g. 1 million,
+          // in a tiny mantissa: hence we came up with the notion of a *decimal*
+          // *floating* *point* value notation for 'short values': we note the 
+          // power as a decimal rather than a binary power and then define the
+          // mantissa as an integer value from, say, 1..1000, hence 1 million (1e6)
+          // would then be encoded as (power=6,mantissa=1), for example.
+          // 
+          // It is more interesting to look at values like 0.33 or 15000: the latter
+          // SHOULD NOT be encoded as (power=4,mantissa=1.5) because that wouldn't work,
+          // but instead the latter should be encoded as (power=3,mantissa=15) to
+          // ensure we get a small mantissa.
+          // As we noted before that 'human values' have few significant digits in
+          // the decimal value, the key is to multiply the value with a decimal 
+          // power until the significant digits are in the integer range, i.e. if
+          // we expect to encode 3-digit values, we 'shift the decimal power by +3' 
+          // so that the mantissa, previously in the range 0..1, now will be in the
+          // range 0..1e3, hence input value 0.33 becomes 0.33e0, shifted by 
+          // decimal power +3 this becomes 330e-3 (330 * 10e-3 === 0.330 === 0.33e0),
+          // which can be encoded precisely in a 9-bit mantissa.
+          // Ditto for example value 15000: while the binary floating point would
+          // encode this as the equivalent of 0.15e6, we transform this into 150e3,
+          // which fits in a 9 bit mantissa as well.
+          // 
+          // ---
+          // 
+          // Now that we've addressed the non-trivial 'decimal floating point' 
+          // concept from 'short float notation', we can go and check how many 
+          // decimal power values we can store: given that we need to *skip*
+          // the Unicode Surrogate ranges (High and Low) at 0xD800..0xDFFF, plus
+          // the Unicode specials at the 0xFFF0..0xFFFF range we should look at
+          // the available bit patterns here... (really we only would be bothered
+          // about 0xFFFD..0xFFFF, but it helps us in other ways to make this 
+          // range a wee little wider: then we can use those code points to 
+          // store the special floating point values NaN, Inf, etc.)
+          // 
+          // For 'short floats' we have the code range 0x8000..0xFFFF, excluding
+          // those skip ranges, i.e. bit15 is always SET for 'short float'. Now
+          // let's look at the bit patterns available for our decimal power,
+          // assuming sign and a mantissa good for 3 decimal significant digits
+          // is placed in the low bits zone (3 decimal digits takes 10 bits):
+          // This gives us 0x80-0xD0 ~ $1000 0sxx .. $1101 0sxx 
+          // + 0xE0-0xF0 ~ $1110 0sxx .. $1111 0sxx
+          // --> power values 0x10..0x1A minus 0x10 --> [0x00..0x0A] --> 11 exponent values.
+          // + 0x1C..0x1E minus 0x1C --> [0x00..0x02]+offset=11 --> 3 extra values! 
+          //
+          // As we want to be able to store 'millis' and 'millions' at least,
+          // there's plenty room as that required range is 10 (6+1+3: don't 
+          // forget about the power value 0!). With this range, it's feasible
+          // to also support all high *billions* (1E9) as well thanks to the extra range 0x1C..0x1E
+          // in Unicode code points 0xE000..0xF7FF.
+          // 
+          // As we choose to only go up to 0xF7FF, we keep 0xF800..0xFFFF as a 
+          // 'reserved for future use' range. From that reserved range, we use
+          // the range 0xF800..0xF8FF to represent floating point numbers with 
+          // very high exponent values (p >= 1020), while the range 0xFFF0..0xFFF4
+          // is used to represent special IEEE754 values such as NaN or Infinity.
+          // 
+          // ---
+          //
+          // Note: we now have our own set of 'denormalized' floating point values:
+          // given the way we calculate decimal exponent and mantissa (by multiplying
+          // with 1000), we will always have a minimum mantissa value of +100, as
+          // any *smaller* value would have produced a lower *exponent*!
+          // 
+          // Next to that, note that we allocate a number of *binary bits* for the
+          // mantissa, which can never acquire a value of +1000 or larger as there
+          // the same reasoning applies: if such a value were possible, the exponent
+          // would have been *raised* by +1 and the mantissa would have been reduced
+          // to land within the +100..+999 range once again.
+          // 
+          // This means that a series of sub-ranges cannot ever be produced by this 
+          // function:
+          // 
+          // - 0x8000      .. 0x8000+  99    (exponent '0', sign bit CLEAR) 
+          // - 0x8000+1000 .. 0x8000+1023 
+          // - 0x8400      .. 0x8400+  99    (exponent '0', sign bit SET) 
+          // - 0x8400+1000 .. 0x8400+1023 
+          // - 0x8800      .. 0x8800+  99    (exponent '1', sign bit CLEAR) 
+          // - 0x8800+1000 .. 0x8800+1023 
+          // - 0x8C00      .. 0x8C00+  99    (exponent '1', sign bit SET) 
+          // - 0x8C00+1000 .. 0x8C00+1023 
+          // - ... etc ...
+          // 
+          // One might be tempted to re-use these 'holes' in the output for other
+          // purposes, but it's faster to have any special codes use their
+          // own 'reserved range' as that would only take one extra conditional
+          // check and since we now know (since perf test0006) that V8 isn't
+          // too happy about long switch/case constructs, we are better off, 
+          // performance wise, to strive for the minimum number of comparisons, 
+          // rather than striving for a maximum fill of the available Unicode
+          // space.
+          // 
+          // BTW: We could have applied this same reasoning when we went looking for
+          // a range to use to encode those pesky near-infinity high exponent
+          // floating point values (p >= 1023), but at the time we hadn't 
+          // realized yet that we would have these (large) holes in the output 
+          // range.
+          // Now that we know these exist, we *might* consider filling one of
+          // those 'holes' with those high-exponent values as those really only
+          // take 5 bits (2 bits for exponent: 1023 or 1024, 1 bit for sign,
+          // 2 bits for length) while they currently usurp the range 0xF800..0xF8FF
+          // (with large holes in there as well!)
+          // 
+          // ---
+          // 
+          // Offset the exponent so it's always positive when encoded:
+          dp += 2;
+          // `dy < 1024` is not required, theoretically, but here as a precaution:
+          if (dp >= 0 && dp < 14 /* (L= 11 + 3) */ /* && dy < 1024 */) {
+              // short float eligible value for sure!
+              var dc;
 
-            // make sure to skip the 0xD8xx range by bumping the exponent:
-            if (dp >= 11) {
-              // dp = 0xB --> dp = 0xC, ...
-              dp++;
-            }
+              // make sure to skip the 0xD8xx range by bumping the exponent:
+              if (dp >= 11) {
+                // dp = 0xB --> dp = 0xC, ...
+                dp++;
+              }
 
-            //
-            // Bits in word:
-            // - 0..9: integer mantissa; values 0..1023
-            // - 10: sign
-            // - 11..14: exponent 0..9 with offset -3 --> -3..+6
-            // - 15: set to signal special values; this bit is also set for some special Unicode characters,
-            //       so we can only set this bit and have particular values in bits 0..14 at the same time
-            //       in order to prevent a collision with those Unicode specials ('surrogates') 
-            //       at 0xD800..0xDFFF (and our own specials at 0xF800..0xFFFF).
-            //
-            // alt:                    __(!!s << 10)_   _dy_____
-            dc = 0x8000 + (dp << 11) + (s ? 1024 : 0) + (dy | 0); // the `| 0` shouldn't be necessary but is there as a precaution
-            if (dc >= 0xF800) {
-              throw new Error('fp decimal short float encoding: internal error: beyond 0xF800');
+              //
+              // Bits in word:
+              // - 0..9: integer mantissa; values 0..1023
+              // - 10: sign
+              // - 11..14: exponent 0..9 with offset -3 --> -3..+6
+              // - 15: set to signal special values; this bit is also set for some special Unicode characters,
+              //       so we can only set this bit and have particular values in bits 0..14 at the same time
+              //       in order to prevent a collision with those Unicode specials ('surrogates') 
+              //       at 0xD800..0xDFFF (and our own specials at 0xF800..0xFFFF).
+              //
+              // alt:                    __(!!s << 10)_   _dy_____
+              dc = 0x8000 + (dp << 11) + (s ? 1024 : 0) + (dy | 0); // the `| 0` shouldn't be necessary but is there as a precaution
+              if (dc >= 0xF800) {
+                throw new Error('fp decimal short float encoding: internal error: beyond 0xF800');
+              }
+              if (dc >= 0xD800 && dc < 0xE000) {
+                throw new Error('fp decimal short float encoding: internal error: landed in 0xD8xx block');
+              }
+              //console.log('d10-dbg', dp, dy, s, '0x' + dc.toString(16), flt);
+              return String.fromCharCode(dc);
             }
-            if (dc >= 0xD800 && dc < 0xE000) {
-              throw new Error('fp decimal short float encoding: internal error: landed in 0xD8xx block');
-            }
-            //console.log('d10-dbg', dp, dy, s, '0x' + dc.toString(16), flt);
-            return String.fromCharCode(dc);
-          }
+        }
       }
     }
 
@@ -702,9 +719,12 @@ function decode_fp_value(s, opt) {
   //console.log('decode task: ', s, s.length, c0, '0x' + c0.toString(16));
 
   // As we expect most encodings to be regular numbers, those will be in 0x0000..0x7FFF and
-  // we don't want to spend the least amount of time in the 'special values' overhead,
+  // we do not want to spend any amount of time in the 'special values' overhead,
   // which would be added overhead if we did check for those *first* instead of *at the same time*
-  // as we do here by looking at the top nibble immediately:
+  // as we do here by looking at the top nibble immediately (Note: This ASSUMES your JS engine (Chrome V8?)
+  // is smart enough to convert this switch/case statement set into a jump table, just like any
+  // decent C-like language compiler would! It turns out not everyone out there is all that smart
+  // yet... Sigh...):
   // 
   // nibble value:
   // 0..7: regular 'long encoding' floating point values. Act as *implicit* NUM opcodes.
@@ -1245,18 +1265,29 @@ function encode_fp_value2(flt) {
       // to fit snugly in the Unicode word range 0x8000..0xC000 or in a larger
       // *decimal float* which spans two words: 13+15 bits.
       var dp = exp2 * FPC_ENC_LOG2_TO_LOG10 + 1 | 0;
-      var dy = flt / Math.pow(10, dp - 3); // take mantissa (which is guaranteed to be in range [0.999 .. 0]) and multiply by 1000
-      //console.log('decimal float test:', flt, exp2, exp2 * FPC_ENC_LOG2_TO_LOG10, p, dp, dy);
 
       // first check exponent, only when in range perform the costly modulo operation
       // and comparison to further check conditions suitable for short float encoding.
       //
-      // `dy < 1024` is not required, theoretically, but here as a precaution:
-      if (dp >= -2 && dp < 12 /* (L= 11 + 3) - o=2 */ /* && dy < 1024 */) {
+      // This also prevents a crash for very small numbers (dp <= -307) and speeds up matters for any other values
+      // which won't ever make it into the 'shorthand notation' anyway.
+      if (dp >= -2 && dp < 12 /* (L= 11 + 3) - o=2 */) {
+          var dy;
+          var dp_3 = dp - 3;
+          // Because `dy = flt / Math.pow(10, dp - 3)` causes bitrot in `dy` LSB (so that, for example, input value 0.00077 becomes 76.9999999999999)
+          // we produce the `dy` value in such a way that the power-of-10 multiplicant/divisor WILL be an INTEGER number, 
+          // which does *not* produce the bitrot in the LSBit of the *decimal* mantissa `dy` that way:
+          if (dp_3 < 0) {
+            dy = flt * Math.pow(10, -dp_3); // take mantissa (which is guaranteed to be in range [0.999 .. 0]) and multiply by 1000
+          } else {
+            dy = flt / Math.pow(10, dp_3); // take mantissa (which is guaranteed to be in range [0.999 .. 0]) and multiply by 1000
+          }
+          //console.log('decimal float test:', flt, exp2, exp2 * FPC_ENC_LOG2_TO_LOG10, p, dp, dy);
+
           // See performance test [test0012-modulo-vs-integer-check] for a technique comparison: 
           // this is the fastest on V8/Edge and second-fastest on FF. 
           var chk = dy | 0;
-          //console.log('decimal float eligible? A:', flt, dy, chk, chk === dy, dp);
+          //console.log('decimal float eligible? A:', { flt: flt, dy: dy, chk: chk, eq: chk === dy, dp: dp, exp2: exp2});
           if (chk === dy) {
             // alt check:   `(dy % 1) === 0`
             // this input value is potentially eligible for 'short decimal float encoding'...
@@ -1677,18 +1708,29 @@ function encode_fp_value3(flt) {
       // to fit snugly in the Unicode word range 0x8000..0xC000 or in a larger
       // *decimal float* which spans two words: 13+15 bits.
       var dp = exp2 * FPC_ENC_LOG2_TO_LOG10 + 1 | 0;
-      var dy = flt / Math.pow(10, dp - 3); // take mantissa (which is guaranteed to be in range [0.999 .. 0]) and multiply by 1000
-      //console.log('decimal float test:', flt, exp2, exp2 * FPC_ENC_LOG2_TO_LOG10, p, dp, dy);
 
       // first check exponent, only when in range perform the costly modulo operation
       // and comparison to further check conditions suitable for short float encoding.
       //
-      // `dy < 1024` is not required, theoretically, but here as a precaution:
-      if (dp >= -2 && dp < 12 /* (L=11 + 3) - o=2 */ /* && dy < 1024 */) {
+      // This also prevents a crash for very small numbers (dp <= -307) and speeds up matters for any other values
+      // which won't ever make it into the 'shorthand notation' anyway.
+      if (dp >= -2 && dp < 12 /* (L=11 + 3) - o=2 */) {
+          var dy;
+          var dp_3 = dp - 3;
+          // Because `dy = flt / Math.pow(10, dp - 3)` causes bitrot in `dy` LSB (so that, for example, input value 0.00077 becomes 76.9999999999999)
+          // we produce the `dy` value in such a way that the power-of-10 multiplicant/divisor WILL be an INTEGER number, 
+          // which does *not* produce the bitrot in the LSBit of the *decimal* mantissa `dy` that way:
+          if (dp_3 < 0) {
+            dy = flt * Math.pow(10, -dp_3); // take mantissa (which is guaranteed to be in range [0.999 .. 0]) and multiply by 1000
+          } else {
+            dy = flt / Math.pow(10, dp_3); // take mantissa (which is guaranteed to be in range [0.999 .. 0]) and multiply by 1000
+          }
+          //console.log('decimal float test:', flt, exp2, exp2 * FPC_ENC_LOG2_TO_LOG10, p, dp, dy);
+
           // See performance test [test0012-modulo-vs-integer-check] for a technique comparison: 
           // this is the fastest on V8/Edge and second-fastest on FF. 
           var chk = dy | 0;
-          //console.log('decimal float eligible? A:', flt, dy, chk, chk === dy, dp);
+          //console.log('decimal float eligible? A:', { flt: flt, dy: dy, chk: chk, eq: chk === dy, dp: dp, exp2: exp2});
           if (chk === dy) {
             // alt check:   `(dy % 1) === 0`
             // this input value is potentially eligible for 'short decimal float encoding'...
@@ -1776,7 +1818,7 @@ function encode_fp_value3(flt) {
             // any *smaller* value would have produced a lower *exponent*!
             // 
             // Next to that, note that we allocate a number of *binary bits* for the
-            // mantissa, which can never acquire a value of +!000 or larger as there
+            // mantissa, which can never acquire a value of +1000 or larger as there
             // the same reasoning applies: if such a value were possible, the exponent
             // would have been *raised* by +1 and the mantissa would have been reduced
             // to land within the +100..+999 range once again.
@@ -2084,18 +2126,29 @@ function encode_fp_value4(flt) {
       // to fit snugly in the Unicode word range 0x8000..0xC000 or in a larger
       // *decimal float* which spans two words: 13+15 bits.
       var dp = exp2 * FPC_ENC_LOG2_TO_LOG10 + 1 | 0;
-      var dy = flt / Math.pow(10, dp - 3); // take mantissa (which is guaranteed to be in range [0.999 .. 0]) and multiply by 1000
-      //console.log('decimal float test:', flt, exp2, exp2 * FPC_ENC_LOG2_TO_LOG10, p, dp, dy);
 
       // first check exponent, only when in range perform the costly modulo operation
       // and comparison to further check conditions suitable for short float encoding.
       //
-      // `dy < 1024` is not required, theoretically, but here as a precaution:
-      if (dp >= -2 && dp < 12 /* (L= 11 + 3) - o=2 */ /* && dy < 1024 */) {
+      // This also prevents a crash for very small numbers (dp <= -307) and speeds up matters for any other values
+      // which won't ever make it into the 'shorthand notation' anyway.
+      if (dp >= -2 && dp < 12 /* (L= 11 + 3) - o=2 */) {
+          var dy;
+          var dp_3 = dp - 3;
+          // Because `dy = flt / Math.pow(10, dp - 3)` causes bitrot in `dy` LSB (so that, for example, input value 0.00077 becomes 76.9999999999999)
+          // we produce the `dy` value in such a way that the power-of-10 multiplicant/divisor WILL be an INTEGER number, 
+          // which does *not* produce the bitrot in the LSBit of the *decimal* mantissa `dy` that way:
+          if (dp_3 < 0) {
+            dy = flt * Math.pow(10, -dp_3); // take mantissa (which is guaranteed to be in range [0.999 .. 0]) and multiply by 1000
+          } else {
+            dy = flt / Math.pow(10, dp_3); // take mantissa (which is guaranteed to be in range [0.999 .. 0]) and multiply by 1000
+          }
+          //console.log('decimal float test:', flt, exp2, exp2 * FPC_ENC_LOG2_TO_LOG10, p, dp, dy);
+
           // See performance test [test0012-modulo-vs-integer-check] for a technique comparison: 
           // this is the fastest on V8/Edge and second-fastest on FF. 
           var chk = dy | 0;
-          //console.log('decimal float eligible? A:', flt, dy, chk, chk === dy, dp);
+          //console.log('decimal float eligible? A:', { flt: flt, dy: dy, chk: chk, eq: chk === dy, dp: dp, exp2: exp2});
           if (chk === dy) {
             // alt check:   `(dy % 1) === 0`
             // this input value is potentially eligible for 'short decimal float encoding'...
@@ -2330,9 +2383,12 @@ function decode_fp_value2(s, opt) {
   //console.log('decode task: ', s, s.length, c0, '0x' + c0.toString(16));
 
   // As we expect most encodings to be regular numbers, those will be in 0x0000..0x7FFF and
-  // we don't want to spend the least amount of time in the 'special values' overhead,
+  // we do not want to spend any amount of time in the 'special values' overhead,
   // which would be added overhead if we did check for those *first* instead of *at the same time*
-  // as we do here by looking at the top nibble immediately:
+  // as we do here by looking at the top nibble immediately (Note: This ASSUMES your JS engine (Chrome V8?)
+  // is smart enough to convert this switch/case statement set into a jump table, just like any
+  // decent C-like language compiler would! It turns out not everyone out there is all that smart
+  // yet... Sigh...):
   // 
   // nibble value:
   // 0..7: regular 'long encoding' floating point values. Act as *implicit* NUM opcodes.
@@ -2711,9 +2767,12 @@ function decode_fp_value3(s, opt) {
   //console.log('decode task: ', s, s.length, c0, '0x' + c0.toString(16));
 
   // As we expect most encodings to be regular numbers, those will be in 0x0000..0x7FFF and
-  // we don't want to spend the least amount of time in the 'special values' overhead,
+  // we do not want to spend any amount of time in the 'special values' overhead,
   // which would be added overhead if we did check for those *first* instead of *at the same time*
-  // as we do here by looking at the top nibble immediately:
+  // as we do here by looking at the top nibble immediately (Note: This ASSUMES your JS engine (Chrome V8?)
+  // is smart enough to convert this switch/case statement set into a jump table, just like any
+  // decent C-like language compiler would! It turns out not everyone out there is all that smart
+  // yet... Sigh...):
   // 
   // nibble value:
   // 0..7: regular 'long encoding' floating point values. Act as *implicit* NUM opcodes.
@@ -2939,7 +2998,7 @@ function decode_fp_value3(s, opt) {
       //   Z̤̺̦̤̰̠̞̃̓̓̎ͤ͒a̮̩̞͎̦̘̮l̖̯̞̝̗̥͙͋̔̆͊ͤ͐̚g͖̣̟̼͙ͪ̆͌̇ỏ̘̯̓ ̮̣͉̺̽͑́i̶͎̳̲ͭͅs̗̝̱̜̱͙̽ͥ̋̄ͨ̑͠ ̬̲͇̭̖ͭ̈́̃G̉̐̊ͪ͟o͓̪̗̤̳̱̅ȍ̔d̳̑ͥͧ̓͂ͤ ́͐́̂to̮̘̖̱͉̜̣ͯ̄͗ǫ̬͚̱͈̮̤̞̿̒ͪ!͆̊ͬͥ̆̊͋
       // 
       // which reside in the other ranges that we DO employ for our own nefarious encoding purposes!
-      throw new Error('illegal fp encoding value in 0xDXXX unicode range');
+      throw new Error('illegal fp encoding value in 0xD800-0xDFFF Unicode range');
     }
   } else {
     // range 0x0000..0x7FFF:
@@ -3182,168 +3241,185 @@ function encode_fp_value0(flt) {
       // to fit snugly in the Unicode word range 0x8000..0xC000 or in a larger
       // *decimal float* which spans two words: 13+15 bits.
       var dp = exp2 * FPC_ENC_LOG2_TO_LOG10 + 1 | 0;
-      var dy = flt / Math.pow(10, dp - 3); // take mantissa (which is guaranteed to be in range [0.999 .. 0]) and multiply by 1000
-      //console.log('decimal float test:', flt, exp2, exp2 * FPC_ENC_LOG2_TO_LOG10, p, dp, dy);
+      // Prevent crash for very small numbers (dp <= -307) and speeds up matters for any other values
+      // which won't ever make it into the 'shorthand notation' anyway: here we replicate the `dp`
+      // range check you also will see further below:
+      //
+      //     dp += 2;
+      //     if (dp >= 0 && dp < 14 /* (L= 11 + 3) */ ) {
+      if (dp >= -2 && dp < 12) {
+        var dy;
+        var dp_3 = dp - 3;
+        // Because `dy = flt / Math.pow(10, dp - 3)` causes bitrot in `dy` LSB (so that, for example, input value 0.00077 becomes 76.9999999999999)
+        // we produce the `dy` value in such a way that the power-of-10 multiplicant/divisor WILL be an INTEGER number, 
+        // which does *not* produce the bitrot in the LSBit of the *decimal* mantissa `dy` that way:
+        if (dp_3 < 0) {
+          dy = flt * Math.pow(10, -dp_3); // take mantissa (which is guaranteed to be in range [0.999 .. 0]) and multiply by 1000
+        } else {
+          dy = flt / Math.pow(10, dp_3); // take mantissa (which is guaranteed to be in range [0.999 .. 0]) and multiply by 1000
+        }
+        //console.log('decimal float test:', flt, exp2, exp2 * FPC_ENC_LOG2_TO_LOG10, p, dp, dy);
 
-      // See performance test [test0012-modulo-vs-integer-check] for a technique comparison: 
-      // this is the fastest on V8/Edge and second-fastest on FF. 
-      var chk = dy | 0;
-      //console.log('decimal float eligible? A:', flt, dy, chk, chk === dy, dp);
-      if (chk === dy) {
-        // alt check:   `(dy % 1) === 0`
-        // this input value is potentially eligible for 'short decimal float encoding'...
-        //
-        // *short* decimal floats take 13-14 bits (10+~4) at 
-        // 0x8000..0xD7FF + 0xE000..0xF7FF (since we skip the Unicode Surrogate range
-        // at 0xD800.0xDFFF (http://unicodebook.readthedocs.io/unicode_encodings.html#utf-16-surrogate-pairs).
-        // 
-        // Our original design had the requirement (more like a *wish* really)
-        // that 'short floats' have decimal exponent -3..+6 at least and encode
-        // almost all 'human numbers', i.e. values that humans enter regularly
-        // in their data: these values usually only have 2-3 significant
-        // digits so we should be able to encode those in a rather tiny mantissa.
-        // 
-        // The problem then is with encoding decimal fractions as quite many of them
-        // don't fit a low-digit-count *binary* mantissa, e.g. 0.5 or 0.3 are
-        // a nightmare if you want *precise* encoding in a tiny binary mantissa.
-        // The solution we came up with was to multiply the number by a decimal power
-        // of 10 so that 'eligible' decimal fractions would actually look like 
-        // integer numbers: when you multiply by 1000, 0.3 becomes 300 which is
-        // perfectly easy to encode in a tiny mantissa (we would need 9 bits).
-        // 
-        // Then the next problem would be to encode large integers, e.g. 1 million,
-        // in a tiny mantissa: hence we came up with the notion of a *decimal*
-        // *floating* *point* value notation for 'short values': we note the 
-        // power as a decimal rather than a binary power and then define the
-        // mantissa as an integer value from, say, 1..1000, hence 1 million (1e6)
-        // would then be encoded as (power=6,mantissa=1), for example.
-        // 
-        // It is more interesting to look at values like 0.33 or 15000: the latter
-        // SHOULD NOT be encoded as (power=4,mantissa=1.5) because that wouldn't work,
-        // but instead the latter should be encoded as (power=3,mantissa=15) to
-        // ensure we get a small mantissa.
-        // As we noted before that 'human values' have few significant digits in
-        // the decimal value, the key is to multiply the value with a decimal 
-        // power until the significant digits are in the integer range, i.e. if
-        // we expect to encode 3-digit values, we 'shift the decimal power by +3' 
-        // so that the mantissa, previously in the range 0..1, now will be in the
-        // range 0..1e3, hence input value 0.33 becomes 0.33e0, shifted by 
-        // decimal power +3 this becomes 330e-3 (330 * 10e-3 === 0.330 === 0.33e0),
-        // which can be encoded precisely in a 9-bit mantissa.
-        // Ditto for example value 15000: while the binary floating point would
-        // encode this as the equivalent of 0.15e6, we transform this into 150e3,
-        // which fits in a 9 bit mantissa as well.
-        // 
-        // ---
-        // 
-        // Now that we've addressed the non-trivial 'decimal floating point' 
-        // concept from 'short float notation', we can go and check how many 
-        // decimal power values we can store: given that we need to *skip*
-        // the Unicode Surrogate ranges (High and Low) at 0xD800..0xDFFF, plus
-        // the Unicode specials at the 0xFFF0..0xFFFF range we should look at
-        // the available bit patterns here... (really we only would be bothered
-        // about 0xFFFD..0xFFFF, but it helps us in other ways to make this 
-        // range a wee little wider: then we can use those code points to 
-        // store the special floating point values NaN, Inf, etc.)
-        // 
-        // For 'short floats' we have the code range 0x8000..0xFFFF, excluding
-        // those skip ranges, i.e. bit15 is always SET for 'short float'. Now
-        // let's look at the bit patterns available for our decimal power,
-        // assuming sign and a mantissa good for 3 decimal significant digits
-        // is placed in the low bits zone (3 decimal digits takes 10 bits):
-        // This gives us 0x80-0xD0 ~ $1000 0sxx .. $1101 0sxx 
-        // + 0xE0-0xF0 ~ $1110 0sxx .. $1111 0sxx
-        // --> power values 0x10..0x1A minus 0x10 --> [0x00..0x0A] --> 11 exponent values.
-        // + 0x1C..0x1E minus 0x1C --> [0x00..0x02]+offset=11 --> 3 extra values! 
-        //
-        // As we want to be able to store 'millis' and 'millions' at least,
-        // there's plenty room as that required range is 10 (6+1+3: don't 
-        // forget about the power value 0!). With this range, it's feasible
-        // to also support all high *billions* (1E9) as well thanks to the extra range 0x1C..0x1E
-        // in Unicode code points 0xE000..0xF7FF.
-        // 
-        // As we choose to only go up to 0xF7FF, we keep 0xF800..0xFFFF as a 
-        // 'reserved for future use' range. From that reserved range, we use
-        // the range 0xF800..0xF8FF to represent floating point numbers with 
-        // very high exponent values (p >= 1020), while the range 0xFFF0..0xFFF4
-        // is used to represent special IEEE754 values such as NaN or Infinity.
-        // 
-        // ---
-        //
-        // Note: we now have our own set of 'denormalized' floating point values:
-        // given the way we calculate decimal exponent and mantissa (by multiplying
-        // with 1000), we will always have a minimum mantissa value of +100, as
-        // any *smaller* value would have produced a lower *exponent*!
-        // 
-        // Next to that, note that we allocate a number of *binary bits* for the
-        // mantissa, which can never acquire a value of +!000 or larger as there
-        // the same reasoning applies: if such a value were possible, the exponent
-        // would have been *raised* by +1 and the mantissa would have been reduced
-        // to land within the +100..+999 range once again.
-        // 
-        // This means that a series of sub-ranges cannot ever be produced by this 
-        // function:
-        // 
-        // - 0x8000      .. 0x8000+  99    (exponent '0', sign bit CLEAR) 
-        // - 0x8000+1000 .. 0x8000+1023 
-        // - 0x8400      .. 0x8400+  99    (exponent '0', sign bit SET) 
-        // - 0x8400+1000 .. 0x8400+1023 
-        // - 0x8800      .. 0x8800+  99    (exponent '1', sign bit CLEAR) 
-        // - 0x8800+1000 .. 0x8800+1023 
-        // - 0x8C00      .. 0x8C00+  99    (exponent '1', sign bit SET) 
-        // - 0x8C00+1000 .. 0x8C00+1023 
-        // - ... etc ...
-        // 
-        // One might be tempted to re-use these 'holes' in the output for other
-        // purposes, but it's faster to have any special codes use their
-        // own 'reserved range' as that would only take one extra conditional
-        // check and since we now know (since perf test0006) that V8 isn't
-        // too happy about long switch/case constructs, we are better off, 
-        // performance wise, to strive for the minimum number of comparisons, 
-        // rather than striving for a maximum fill of the available Unicode
-        // space.
-        // 
-        // BTW: We could have applied this same reasoning when we went looking for
-        // a range to use to encode those pesky near-infinity high exponent
-        // floating point values (p >= 1023), but at the time we hadn't 
-        // realized yet that we would have these (large) holes in the output 
-        // range.
-        // Now that we know these exist, we *might* consider filling one of
-        // those 'holes' with those high-exponent values as those really only
-        // take 5 bits (2 bits for exponent: 1023 or 1024, 1 bit for sign,
-        // 2 bits for length) while they currently usurp the range 0xF800..0xF8FF
-        // (with large holes in there as well!)
-        // 
-        // ---
-        // 
-        // Offset the exponent so it's always positive when encoded:
-        dp += 2;
-        // `dy < 1024` is not required, theoretically, but here as a precaution:
-        if (dp >= 0 && dp < 14 /* (L= 11 + 3) */ /* && dy < 1024 */) {
-            // short float eligible value for sure!
-            var dc;
+        // See performance test [test0012-modulo-vs-integer-check] for a technique comparison: 
+        // this is the fastest on V8/Edge and second-fastest on FF. 
+        var chk = dy | 0;
+        //console.log('decimal float eligible? A:', { flt: flt, dy: dy, chk: chk, eq: chk === dy, dp: dp, exp2: exp2});
+        if (chk === dy) {
+          // alt check:   `(dy % 1) === 0`
+          // this input value is potentially eligible for 'short decimal float encoding'...
+          //
+          // *short* decimal floats take 13-14 bits (10+~4) at 
+          // 0x8000..0xD7FF + 0xE000..0xF7FF (since we skip the Unicode Surrogate range
+          // at 0xD800.0xDFFF (http://unicodebook.readthedocs.io/unicode_encodings.html#utf-16-surrogate-pairs).
+          // 
+          // Our original design had the requirement (more like a *wish* really)
+          // that 'short floats' have decimal exponent -3..+6 at least and encode
+          // almost all 'human numbers', i.e. values that humans enter regularly
+          // in their data: these values usually only have 2-3 significant
+          // digits so we should be able to encode those in a rather tiny mantissa.
+          // 
+          // The problem then is with encoding decimal fractions as quite many of them
+          // don't fit a low-digit-count *binary* mantissa, e.g. 0.5 or 0.3 are
+          // a nightmare if you want *precise* encoding in a tiny binary mantissa.
+          // The solution we came up with was to multiply the number by a decimal power
+          // of 10 so that 'eligible' decimal fractions would actually look like 
+          // integer numbers: when you multiply by 1000, 0.3 becomes 300 which is
+          // perfectly easy to encode in a tiny mantissa (we would need 9 bits).
+          // 
+          // Then the next problem would be to encode large integers, e.g. 1 million,
+          // in a tiny mantissa: hence we came up with the notion of a *decimal*
+          // *floating* *point* value notation for 'short values': we note the 
+          // power as a decimal rather than a binary power and then define the
+          // mantissa as an integer value from, say, 1..1000, hence 1 million (1e6)
+          // would then be encoded as (power=6,mantissa=1), for example.
+          // 
+          // It is more interesting to look at values like 0.33 or 15000: the latter
+          // SHOULD NOT be encoded as (power=4,mantissa=1.5) because that wouldn't work,
+          // but instead the latter should be encoded as (power=3,mantissa=15) to
+          // ensure we get a small mantissa.
+          // As we noted before that 'human values' have few significant digits in
+          // the decimal value, the key is to multiply the value with a decimal 
+          // power until the significant digits are in the integer range, i.e. if
+          // we expect to encode 3-digit values, we 'shift the decimal power by +3' 
+          // so that the mantissa, previously in the range 0..1, now will be in the
+          // range 0..1e3, hence input value 0.33 becomes 0.33e0, shifted by 
+          // decimal power +3 this becomes 330e-3 (330 * 10e-3 === 0.330 === 0.33e0),
+          // which can be encoded precisely in a 9-bit mantissa.
+          // Ditto for example value 15000: while the binary floating point would
+          // encode this as the equivalent of 0.15e6, we transform this into 150e3,
+          // which fits in a 9 bit mantissa as well.
+          // 
+          // ---
+          // 
+          // Now that we've addressed the non-trivial 'decimal floating point' 
+          // concept from 'short float notation', we can go and check how many 
+          // decimal power values we can store: given that we need to *skip*
+          // the Unicode Surrogate ranges (High and Low) at 0xD800..0xDFFF, plus
+          // the Unicode specials at the 0xFFF0..0xFFFF range we should look at
+          // the available bit patterns here... (really we only would be bothered
+          // about 0xFFFD..0xFFFF, but it helps us in other ways to make this 
+          // range a wee little wider: then we can use those code points to 
+          // store the special floating point values NaN, Inf, etc.)
+          // 
+          // For 'short floats' we have the code range 0x8000..0xFFFF, excluding
+          // those skip ranges, i.e. bit15 is always SET for 'short float'. Now
+          // let's look at the bit patterns available for our decimal power,
+          // assuming sign and a mantissa good for 3 decimal significant digits
+          // is placed in the low bits zone (3 decimal digits takes 10 bits):
+          // This gives us 0x80-0xD0 ~ $1000 0sxx .. $1101 0sxx 
+          // + 0xE0-0xF0 ~ $1110 0sxx .. $1111 0sxx
+          // --> power values 0x10..0x1A minus 0x10 --> [0x00..0x0A] --> 11 exponent values.
+          // + 0x1C..0x1E minus 0x1C --> [0x00..0x02]+offset=11 --> 3 extra values! 
+          //
+          // As we want to be able to store 'millis' and 'millions' at least,
+          // there's plenty room as that required range is 10 (6+1+3: don't 
+          // forget about the power value 0!). With this range, it's feasible
+          // to also support all high *billions* (1E9) as well thanks to the extra range 0x1C..0x1E
+          // in Unicode code points 0xE000..0xF7FF.
+          // 
+          // As we choose to only go up to 0xF7FF, we keep 0xF800..0xFFFF as a 
+          // 'reserved for future use' range. From that reserved range, we use
+          // the range 0xF800..0xF8FF to represent floating point numbers with 
+          // very high exponent values (p >= 1020), while the range 0xFFF0..0xFFF4
+          // is used to represent special IEEE754 values such as NaN or Infinity.
+          // 
+          // ---
+          //
+          // Note: we now have our own set of 'denormalized' floating point values:
+          // given the way we calculate decimal exponent and mantissa (by multiplying
+          // with 1000), we will always have a minimum mantissa value of +100, as
+          // any *smaller* value would have produced a lower *exponent*!
+          // 
+          // Next to that, note that we allocate a number of *binary bits* for the
+          // mantissa, which can never acquire a value of +1000 or larger as there
+          // the same reasoning applies: if such a value were possible, the exponent
+          // would have been *raised* by +1 and the mantissa would have been reduced
+          // to land within the +100..+999 range once again.
+          // 
+          // This means that a series of sub-ranges cannot ever be produced by this 
+          // function:
+          // 
+          // - 0x8000      .. 0x8000+  99    (exponent '0', sign bit CLEAR) 
+          // - 0x8000+1000 .. 0x8000+1023 
+          // - 0x8400      .. 0x8400+  99    (exponent '0', sign bit SET) 
+          // - 0x8400+1000 .. 0x8400+1023 
+          // - 0x8800      .. 0x8800+  99    (exponent '1', sign bit CLEAR) 
+          // - 0x8800+1000 .. 0x8800+1023 
+          // - 0x8C00      .. 0x8C00+  99    (exponent '1', sign bit SET) 
+          // - 0x8C00+1000 .. 0x8C00+1023 
+          // - ... etc ...
+          // 
+          // One might be tempted to re-use these 'holes' in the output for other
+          // purposes, but it's faster to have any special codes use their
+          // own 'reserved range' as that would only take one extra conditional
+          // check and since we now know (since perf test0006) that V8 isn't
+          // too happy about long switch/case constructs, we are better off, 
+          // performance wise, to strive for the minimum number of comparisons, 
+          // rather than striving for a maximum fill of the available Unicode
+          // space.
+          // 
+          // BTW: We could have applied this same reasoning when we went looking for
+          // a range to use to encode those pesky near-infinity high exponent
+          // floating point values (p >= 1023), but at the time we hadn't 
+          // realized yet that we would have these (large) holes in the output 
+          // range.
+          // Now that we know these exist, we *might* consider filling one of
+          // those 'holes' with those high-exponent values as those really only
+          // take 5 bits (2 bits for exponent: 1023 or 1024, 1 bit for sign,
+          // 2 bits for length) while they currently usurp the range 0xF800..0xF8FF
+          // (with large holes in there as well!)
+          // 
+          // ---
+          // 
+          // Offset the exponent so it's always positive when encoded:
+          dp += 2;
+          // `dy < 1024` is not required, theoretically, but here as a precaution:
+          if (dp >= 0 && dp < 14 /* (L= 11 + 3) */ /* && dy < 1024 */) {
+              // short float eligible value for sure!
+              var dc;
 
-            // make sure to skip the 0xD8xx range by bumping the exponent:
-            if (dp >= 11) {
-              // dp = 0xB --> dp = 0xC, ...
-              dp++;
+              // make sure to skip the 0xD8xx range by bumping the exponent:
+              if (dp >= 11) {
+                // dp = 0xB --> dp = 0xC, ...
+                dp++;
+              }
+
+              //
+              // Bits in word:
+              // - 0..9: integer mantissa; values 0..1023
+              // - 10: sign
+              // - 11..14: exponent 0..9 with offset -3 --> -3..+6
+              // - 15: set to signal special values; this bit is also set for some special Unicode characters,
+              //       so we can only set this bit and have particular values in bits 0..14 at the same time
+              //       in order to prevent a collision with those Unicode specials ('surrogates') 
+              //       at 0xD800..0xDFFF (and our own specials at 0xF800..0xFFFF).
+              //
+              // alt:                    __(!!s << 10)_   _dy_____
+              dc = 0x8000 + (dp << 11) + (s ? 1024 : 0) + (dy | 0); // the `| 0` shouldn't be necessary but is there as a precaution
+              //console.log('d10-dbg', dp, dy, s, '0x' + dc.toString(16), flt);
+              return String.fromCharCode(dc);
             }
-
-            //
-            // Bits in word:
-            // - 0..9: integer mantissa; values 0..1023
-            // - 10: sign
-            // - 11..14: exponent 0..9 with offset -3 --> -3..+6
-            // - 15: set to signal special values; this bit is also set for some special Unicode characters,
-            //       so we can only set this bit and have particular values in bits 0..14 at the same time
-            //       in order to prevent a collision with those Unicode specials ('surrogates') 
-            //       at 0xD800..0xDFFF (and our own specials at 0xF800..0xFFFF).
-            //
-            // alt:                    __(!!s << 10)_   _dy_____
-            dc = 0x8000 + (dp << 11) + (s ? 1024 : 0) + (dy | 0); // the `| 0` shouldn't be necessary but is there as a precaution
-            //console.log('d10-dbg', dp, dy, s, '0x' + dc.toString(16), flt);
-            return String.fromCharCode(dc);
-          }
+        }
       }
     }
 
@@ -3421,9 +3497,12 @@ function decode_fp_value0(s, opt) {
   //console.log('decode task: ', s, s.length, c0, '0x' + c0.toString(16));
 
   // As we expect most encodings to be regular numbers, those will be in 0x0000..0x7FFF and
-  // we don't want to spend the least amount of time in the 'special values' overhead,
+  // we do not want to spend any amount of time in the 'special values' overhead,
   // which would be added overhead if we did check for those *first* instead of *at the same time*
-  // as we do here by looking at the top nibble immediately:
+  // as we do here by looking at the top nibble immediately (Note: This ASSUMES your JS engine (Chrome V8?)
+  // is smart enough to convert this switch/case statement set into a jump table, just like any
+  // decent C-like language compiler would! It turns out not everyone out there is all that smart
+  // yet... Sigh...):
   // 
   // nibble value:
   // 0..7: regular 'long encoding' floating point values. Act as *implicit* NUM opcodes.
@@ -3743,7 +3822,7 @@ function decode_fp_value0(s, opt) {
   }
 }
 
-// A near copy of decode_fp_value3() but with a approach to the optional `opt.consumed_length`
+// A near copy of decode_fp_value3() but with a different approach to the optional `opt.consumed_length`
 // feedback.
 
 
@@ -3757,9 +3836,12 @@ function decode_fp_value4(s, opt) {
   //console.log('decode task: ', s, s.length, c0, '0x' + c0.toString(16));
 
   // As we expect most encodings to be regular numbers, those will be in 0x0000..0x7FFF and
-  // we don't want to spend the least amount of time in the 'special values' overhead,
+  // we do not want to spend any amount of time in the 'special values' overhead,
   // which would be added overhead if we did check for those *first* instead of *at the same time*
-  // as we do here by looking at the top nibble immediately:
+  // as we do here by looking at the top nibble immediately (Note: This ASSUMES your JS engine (Chrome V8?)
+  // is smart enough to convert this switch/case statement set into a jump table, just like any
+  // decent C-like language compiler would! It turns out not everyone out there is all that smart
+  // yet... Sigh...):
   // 
   // nibble value:
   // 0..7: regular 'long encoding' floating point values. Act as *implicit* NUM opcodes.
@@ -4162,7 +4244,8 @@ function decode_fp_value4(s, opt) {
 // Extra: we might want to consider creating an 'initial guess' helper table
 // to cut down the binary search O(log N) from 15 iterations down to only
 // a single exponent range (N=1000 --> 10 iterations), while we might then
-// be able to use a numeric 
+// be able to use a numeric table index, which means we could then use simple 
+// arrays for both encoding and decoding lookup tables.
 
 
 // mapping Unicode character code to fp value or FALSE
@@ -4334,183 +4417,200 @@ function encode_fp_value5(flt) {
       // to fit snugly in the Unicode word range 0x8000..0xC000 or in a larger
       // *decimal float* which spans two words: 13+15 bits.
       var dp = exp2 * FPC_ENC_LOG2_TO_LOG10 + 1 | 0;
-      var dy = flt / Math.pow(10, dp - 3); // take mantissa (which is guaranteed to be in range [0.999 .. 0]) and multiply by 1000
-      //console.log('decimal float test:', flt, exp2, exp2 * FPC_ENC_LOG2_TO_LOG10, p, dp, dy);
-      if (dy < 0) {
-        throw new Error('fp decimal short float encoding: negative mantissa');
-      }
-      if (dy === 0) {
-        throw new Error('fp decimal short float encoding: ZERO mantissa');
-      }
-      if (dy > 1000) {
-        throw new Error('fp decimal short float encoding: 3 digits check');
-      }
+      // Prevent crash for very small numbers (dp <= -307) and speeds up matters for any other values
+      // which won't ever make it into the 'shorthand notation' anyway: here we replicate the `dp`
+      // range check you also will see further below:
+      //
+      //     dp += 2;
+      //     if (dp >= 0 && dp < 14 /* (L= 11 + 3) */ ) {
+      if (dp >= -2 && dp < 12) {
+        var dy;
+        var dp_3 = dp - 3;
+        // Because `dy = flt / Math.pow(10, dp - 3)` causes bitrot in `dy` LSB (so that, for example, input value 0.00077 becomes 76.9999999999999)
+        // we produce the `dy` value in such a way that the power-of-10 multiplicant/divisor WILL be an INTEGER number, 
+        // which does *not* produce the bitrot in the LSBit of the *decimal* mantissa `dy` that way:
+        if (dp_3 < 0) {
+          dy = flt * Math.pow(10, -dp_3); // take mantissa (which is guaranteed to be in range [0.999 .. 0]) and multiply by 1000
+        } else {
+          dy = flt / Math.pow(10, dp_3); // take mantissa (which is guaranteed to be in range [0.999 .. 0]) and multiply by 1000
+        }
+        //console.log('decimal float test:', flt, exp2, exp2 * FPC_ENC_LOG2_TO_LOG10, p, dp, dy);
+        if (dy < 0) {
+          throw new Error('fp decimal short float encoding: negative mantissa');
+        }
+        if (dy === 0) {
+          throw new Error('fp decimal short float encoding: ZERO mantissa');
+        }
+        if (dy > 1000) {
+          throw new Error('fp decimal short float encoding: 3 digits check');
+        }
 
-      // See performance test [test0012-modulo-vs-integer-check] for a technique comparison: 
-      // this is the fastest on V8/Edge and second-fastest on FF. 
-      var chk = dy | 0;
-      //console.log('decimal float eligible? A:', flt, dy, chk, chk === dy, dp);
-      if (chk === dy) {
-        // alt check:   `(dy % 1) === 0`
-        // this input value is potentially eligible for 'short decimal float encoding'...
-        //
-        // *short* decimal floats take 13-14 bits (10+~4) at 
-        // 0x8000..0xD7FF + 0xE000..0xF7FF (since we skip the Unicode Surrogate range
-        // at 0xD800.0xDFFF (http://unicodebook.readthedocs.io/unicode_encodings.html#utf-16-surrogate-pairs).
-        // 
-        // Our original design had the requirement (more like a *wish* really)
-        // that 'short floats' have decimal exponent -3..+6 at least and encode
-        // almost all 'human numbers', i.e. values that humans enter regularly
-        // in their data: these values usually only have 2-3 significant
-        // digits so we should be able to encode those in a rather tiny mantissa.
-        // 
-        // The problem then is with encoding decimal fractions as quite many of them
-        // don't fit a low-digit-count *binary* mantissa, e.g. 0.5 or 0.3 are
-        // a nightmare if you want *precise* encoding in a tiny binary mantissa.
-        // The solution we came up with was to multiply the number by a decimal power
-        // of 10 so that 'eligible' decimal fractions would actually look like 
-        // integer numbers: when you multiply by 1000, 0.3 becomes 300 which is
-        // perfectly easy to encode in a tiny mantissa (we would need 9 bits).
-        // 
-        // Then the next problem would be to encode large integers, e.g. 1 million,
-        // in a tiny mantissa: hence we came up with the notion of a *decimal*
-        // *floating* *point* value notation for 'short values': we note the 
-        // power as a decimal rather than a binary power and then define the
-        // mantissa as an integer value from, say, 1..1000, hence 1 million (1e6)
-        // would then be encoded as (power=6,mantissa=1), for example.
-        // 
-        // It is more interesting to look at values like 0.33 or 15000: the latter
-        // SHOULD NOT be encoded as (power=4,mantissa=1.5) because that wouldn't work,
-        // but instead the latter should be encoded as (power=3,mantissa=15) to
-        // ensure we get a small mantissa.
-        // As we noted before that 'human values' have few significant digits in
-        // the decimal value, the key is to multiply the value with a decimal 
-        // power until the significant digits are in the integer range, i.e. if
-        // we expect to encode 3-digit values, we 'shift the decimal power by +3' 
-        // so that the mantissa, previously in the range 0..1, now will be in the
-        // range 0..1e3, hence input value 0.33 becomes 0.33e0, shifted by 
-        // decimal power +3 this becomes 330e-3 (330 * 10e-3 === 0.330 === 0.33e0),
-        // which can be encoded precisely in a 9-bit mantissa.
-        // Ditto for example value 15000: while the binary floating point would
-        // encode this as the equivalent of 0.15e6, we transform this into 150e3,
-        // which fits in a 9 bit mantissa as well.
-        // 
-        // ---
-        // 
-        // Now that we've addressed the non-trivial 'decimal floating point' 
-        // concept from 'short float notation', we can go and check how many 
-        // decimal power values we can store: given that we need to *skip*
-        // the Unicode Surrogate ranges (High and Low) at 0xD800..0xDFFF, plus
-        // the Unicode specials at the 0xFFF0..0xFFFF range we should look at
-        // the available bit patterns here... (really we only would be bothered
-        // about 0xFFFD..0xFFFF, but it helps us in other ways to make this 
-        // range a wee little wider: then we can use those code points to 
-        // store the special floating point values NaN, Inf, etc.)
-        // 
-        // For 'short floats' we have the code range 0x8000..0xFFFF, excluding
-        // those skip ranges, i.e. bit15 is always SET for 'short float'. Now
-        // let's look at the bit patterns available for our decimal power,
-        // assuming sign and a mantissa good for 3 decimal significant digits
-        // is placed in the low bits zone (3 decimal digits takes 10 bits):
-        // This gives us 0x80-0xD0 ~ $1000 0sxx .. $1101 0sxx 
-        // + 0xE0-0xF0 ~ $1110 0sxx .. $1111 0sxx
-        // --> power values 0x10..0x1A minus 0x10 --> [0x00..0x0A] --> 11 exponent values.
-        // + 0x1C..0x1E minus 0x1C --> [0x00..0x02]+offset=11 --> 3 extra values! 
-        //
-        // As we want to be able to store 'millis' and 'millions' at least,
-        // there's plenty room as that required range is 10 (6+1+3: don't 
-        // forget about the power value 0!). With this range, it's feasible
-        // to also support all high *billions* (1E9) as well thanks to the extra range 0x1C..0x1E
-        // in Unicode code points 0xE000..0xF7FF.
-        // 
-        // As we choose to only go up to 0xF7FF, we keep 0xF800..0xFFFF as a 
-        // 'reserved for future use' range. From that reserved range, we use
-        // the range 0xF800..0xF8FF to represent floating point numbers with 
-        // very high exponent values (p >= 1020), while the range 0xFFF0..0xFFF4
-        // is used to represent special IEEE754 values such as NaN or Infinity.
-        // 
-        // ---
-        //
-        // Note: we now have our own set of 'denormalized' floating point values:
-        // given the way we calculate decimal exponent and mantissa (by multiplying
-        // with 1000), we will always have a minimum mantissa value of +100, as
-        // any *smaller* value would have produced a lower *exponent*!
-        // 
-        // Next to that, note that we allocate a number of *binary bits* for the
-        // mantissa, which can never acquire a value of +!000 or larger as there
-        // the same reasoning applies: if such a value were possible, the exponent
-        // would have been *raised* by +1 and the mantissa would have been reduced
-        // to land within the +100..+999 range once again.
-        // 
-        // This means that a series of sub-ranges cannot ever be produced by this 
-        // function:
-        // 
-        // - 0x8000      .. 0x8000+  99    (exponent '0', sign bit CLEAR) 
-        // - 0x8000+1000 .. 0x8000+1023 
-        // - 0x8400      .. 0x8400+  99    (exponent '0', sign bit SET) 
-        // - 0x8400+1000 .. 0x8400+1023 
-        // - 0x8800      .. 0x8800+  99    (exponent '1', sign bit CLEAR) 
-        // - 0x8800+1000 .. 0x8800+1023 
-        // - 0x8C00      .. 0x8C00+  99    (exponent '1', sign bit SET) 
-        // - 0x8C00+1000 .. 0x8C00+1023 
-        // - ... etc ...
-        // 
-        // One might be tempted to re-use these 'holes' in the output for other
-        // purposes, but it's faster to have any special codes use their
-        // own 'reserved range' as that would only take one extra conditional
-        // check and since we now know (since perf test0006) that V8 isn't
-        // too happy about long switch/case constructs, we are better off, 
-        // performance wise, to strive for the minimum number of comparisons, 
-        // rather than striving for a maximum fill of the available Unicode
-        // space.
-        // 
-        // BTW: We could have applied this same reasoning when we went looking for
-        // a range to use to encode those pesky near-infinity high exponent
-        // floating point values (p >= 1023), but at the time we hadn't 
-        // realized yet that we would have these (large) holes in the output 
-        // range.
-        // Now that we know these exist, we *might* consider filling one of
-        // those 'holes' with those high-exponent values as those really only
-        // take 5 bits (2 bits for exponent: 1023 or 1024, 1 bit for sign,
-        // 2 bits for length) while they currently usurp the range 0xF800..0xF8FF
-        // (with large holes in there as well!)
-        // 
-        // ---
-        // 
-        // Offset the exponent so it's always positive when encoded:
-        dp += 2;
-        // `dy < 1024` is not required, theoretically, but here as a precaution:
-        if (dp >= 0 && dp < 14 /* (L= 11 + 3) */ /* && dy < 1024 */) {
-            // short float eligible value for sure!
-            var dc;
+        // See performance test [test0012-modulo-vs-integer-check] for a technique comparison: 
+        // this is the fastest on V8/Edge and second-fastest on FF. 
+        var chk = dy | 0;
+        //console.log('decimal float eligible? A:', { flt: flt, dy: dy, chk: chk, eq: chk === dy, dp: dp, exp2: exp2});
+        if (chk === dy) {
+          // alt check:   `(dy % 1) === 0`
+          // this input value is potentially eligible for 'short decimal float encoding'...
+          //
+          // *short* decimal floats take 13-14 bits (10+~4) at 
+          // 0x8000..0xD7FF + 0xE000..0xF7FF (since we skip the Unicode Surrogate range
+          // at 0xD800.0xDFFF (http://unicodebook.readthedocs.io/unicode_encodings.html#utf-16-surrogate-pairs).
+          // 
+          // Our original design had the requirement (more like a *wish* really)
+          // that 'short floats' have decimal exponent -3..+6 at least and encode
+          // almost all 'human numbers', i.e. values that humans enter regularly
+          // in their data: these values usually only have 2-3 significant
+          // digits so we should be able to encode those in a rather tiny mantissa.
+          // 
+          // The problem then is with encoding decimal fractions as quite many of them
+          // don't fit a low-digit-count *binary* mantissa, e.g. 0.5 or 0.3 are
+          // a nightmare if you want *precise* encoding in a tiny binary mantissa.
+          // The solution we came up with was to multiply the number by a decimal power
+          // of 10 so that 'eligible' decimal fractions would actually look like 
+          // integer numbers: when you multiply by 1000, 0.3 becomes 300 which is
+          // perfectly easy to encode in a tiny mantissa (we would need 9 bits).
+          // 
+          // Then the next problem would be to encode large integers, e.g. 1 million,
+          // in a tiny mantissa: hence we came up with the notion of a *decimal*
+          // *floating* *point* value notation for 'short values': we note the 
+          // power as a decimal rather than a binary power and then define the
+          // mantissa as an integer value from, say, 1..1000, hence 1 million (1e6)
+          // would then be encoded as (power=6,mantissa=1), for example.
+          // 
+          // It is more interesting to look at values like 0.33 or 15000: the latter
+          // SHOULD NOT be encoded as (power=4,mantissa=1.5) because that wouldn't work,
+          // but instead the latter should be encoded as (power=3,mantissa=15) to
+          // ensure we get a small mantissa.
+          // As we noted before that 'human values' have few significant digits in
+          // the decimal value, the key is to multiply the value with a decimal 
+          // power until the significant digits are in the integer range, i.e. if
+          // we expect to encode 3-digit values, we 'shift the decimal power by +3' 
+          // so that the mantissa, previously in the range 0..1, now will be in the
+          // range 0..1e3, hence input value 0.33 becomes 0.33e0, shifted by 
+          // decimal power +3 this becomes 330e-3 (330 * 10e-3 === 0.330 === 0.33e0),
+          // which can be encoded precisely in a 9-bit mantissa.
+          // Ditto for example value 15000: while the binary floating point would
+          // encode this as the equivalent of 0.15e6, we transform this into 150e3,
+          // which fits in a 9 bit mantissa as well.
+          // 
+          // ---
+          // 
+          // Now that we've addressed the non-trivial 'decimal floating point' 
+          // concept from 'short float notation', we can go and check how many 
+          // decimal power values we can store: given that we need to *skip*
+          // the Unicode Surrogate ranges (High and Low) at 0xD800..0xDFFF, plus
+          // the Unicode specials at the 0xFFF0..0xFFFF range we should look at
+          // the available bit patterns here... (really we only would be bothered
+          // about 0xFFFD..0xFFFF, but it helps us in other ways to make this 
+          // range a wee little wider: then we can use those code points to 
+          // store the special floating point values NaN, Inf, etc.)
+          // 
+          // For 'short floats' we have the code range 0x8000..0xFFFF, excluding
+          // those skip ranges, i.e. bit15 is always SET for 'short float'. Now
+          // let's look at the bit patterns available for our decimal power,
+          // assuming sign and a mantissa good for 3 decimal significant digits
+          // is placed in the low bits zone (3 decimal digits takes 10 bits):
+          // This gives us 0x80-0xD0 ~ $1000 0sxx .. $1101 0sxx 
+          // + 0xE0-0xF0 ~ $1110 0sxx .. $1111 0sxx
+          // --> power values 0x10..0x1A minus 0x10 --> [0x00..0x0A] --> 11 exponent values.
+          // + 0x1C..0x1E minus 0x1C --> [0x00..0x02]+offset=11 --> 3 extra values! 
+          //
+          // As we want to be able to store 'millis' and 'millions' at least,
+          // there's plenty room as that required range is 10 (6+1+3: don't 
+          // forget about the power value 0!). With this range, it's feasible
+          // to also support all high *billions* (1E9) as well thanks to the extra range 0x1C..0x1E
+          // in Unicode code points 0xE000..0xF7FF.
+          // 
+          // As we choose to only go up to 0xF7FF, we keep 0xF800..0xFFFF as a 
+          // 'reserved for future use' range. From that reserved range, we use
+          // the range 0xF800..0xF8FF to represent floating point numbers with 
+          // very high exponent values (p >= 1020), while the range 0xFFF0..0xFFF4
+          // is used to represent special IEEE754 values such as NaN or Infinity.
+          // 
+          // ---
+          //
+          // Note: we now have our own set of 'denormalized' floating point values:
+          // given the way we calculate decimal exponent and mantissa (by multiplying
+          // with 1000), we will always have a minimum mantissa value of +100, as
+          // any *smaller* value would have produced a lower *exponent*!
+          // 
+          // Next to that, note that we allocate a number of *binary bits* for the
+          // mantissa, which can never acquire a value of +1000 or larger as there
+          // the same reasoning applies: if such a value were possible, the exponent
+          // would have been *raised* by +1 and the mantissa would have been reduced
+          // to land within the +100..+999 range once again.
+          // 
+          // This means that a series of sub-ranges cannot ever be produced by this 
+          // function:
+          // 
+          // - 0x8000      .. 0x8000+  99    (exponent '0', sign bit CLEAR) 
+          // - 0x8000+1000 .. 0x8000+1023 
+          // - 0x8400      .. 0x8400+  99    (exponent '0', sign bit SET) 
+          // - 0x8400+1000 .. 0x8400+1023 
+          // - 0x8800      .. 0x8800+  99    (exponent '1', sign bit CLEAR) 
+          // - 0x8800+1000 .. 0x8800+1023 
+          // - 0x8C00      .. 0x8C00+  99    (exponent '1', sign bit SET) 
+          // - 0x8C00+1000 .. 0x8C00+1023 
+          // - ... etc ...
+          // 
+          // One might be tempted to re-use these 'holes' in the output for other
+          // purposes, but it's faster to have any special codes use their
+          // own 'reserved range' as that would only take one extra conditional
+          // check and since we now know (since perf test0006) that V8 isn't
+          // too happy about long switch/case constructs, we are better off, 
+          // performance wise, to strive for the minimum number of comparisons, 
+          // rather than striving for a maximum fill of the available Unicode
+          // space.
+          // 
+          // BTW: We could have applied this same reasoning when we went looking for
+          // a range to use to encode those pesky near-infinity high exponent
+          // floating point values (p >= 1023), but at the time we hadn't 
+          // realized yet that we would have these (large) holes in the output 
+          // range.
+          // Now that we know these exist, we *might* consider filling one of
+          // those 'holes' with those high-exponent values as those really only
+          // take 5 bits (2 bits for exponent: 1023 or 1024, 1 bit for sign,
+          // 2 bits for length) while they currently usurp the range 0xF800..0xF8FF
+          // (with large holes in there as well!)
+          // 
+          // ---
+          // 
+          // Offset the exponent so it's always positive when encoded:
+          dp += 2;
+          // `dy < 1024` is not required, theoretically, but here as a precaution:
+          if (dp >= 0 && dp < 14 /* (L= 11 + 3) */ /* && dy < 1024 */) {
+              // short float eligible value for sure!
+              var dc;
 
-            // make sure to skip the 0xD8xx range by bumping the exponent:
-            if (dp >= 11) {
-              // dp = 0xB --> dp = 0xC, ...
-              dp++;
-            }
+              // make sure to skip the 0xD8xx range by bumping the exponent:
+              if (dp >= 11) {
+                // dp = 0xB --> dp = 0xC, ...
+                dp++;
+              }
 
-            //
-            // Bits in word:
-            // - 0..9: integer mantissa; values 0..1023
-            // - 10: sign
-            // - 11..14: exponent 0..9 with offset -3 --> -3..+6
-            // - 15: set to signal special values; this bit is also set for some special Unicode characters,
-            //       so we can only set this bit and have particular values in bits 0..14 at the same time
-            //       in order to prevent a collision with those Unicode specials ('surrogates') 
-            //       at 0xD800..0xDFFF (and our own specials at 0xF800..0xFFFF).
-            //
-            // alt:                    __(!!s << 10)_   _dy_____
-            dc = 0x8000 + (dp << 11) + (s ? 1024 : 0) + (dy | 0); // the `| 0` shouldn't be necessary but is there as a precaution
-            if (dc >= 0xF800) {
-              throw new Error('fp decimal short float encoding: internal error: beyond 0xF800');
+              //
+              // Bits in word:
+              // - 0..9: integer mantissa; values 0..1023
+              // - 10: sign
+              // - 11..14: exponent 0..9 with offset -3 --> -3..+6
+              // - 15: set to signal special values; this bit is also set for some special Unicode characters,
+              //       so we can only set this bit and have particular values in bits 0..14 at the same time
+              //       in order to prevent a collision with those Unicode specials ('surrogates') 
+              //       at 0xD800..0xDFFF (and our own specials at 0xF800..0xFFFF).
+              //
+              // alt:                    __(!!s << 10)_   _dy_____
+              dc = 0x8000 + (dp << 11) + (s ? 1024 : 0) + (dy | 0); // the `| 0` shouldn't be necessary but is there as a precaution
+              if (dc >= 0xF800) {
+                throw new Error('fp decimal short float encoding: internal error: beyond 0xF800');
+              }
+              if (dc >= 0xD800 && dc < 0xE000) {
+                throw new Error('fp decimal short float encoding: internal error: landed in 0xD8xx block');
+              }
+              //console.log('d10-dbg', dp, dy, s, '0x' + dc.toString(16), flt);
+              return String.fromCharCode(dc);
             }
-            if (dc >= 0xD800 && dc < 0xE000) {
-              throw new Error('fp decimal short float encoding: internal error: landed in 0xD8xx block');
-            }
-            //console.log('d10-dbg', dp, dy, s, '0x' + dc.toString(16), flt);
-            return String.fromCharCode(dc);
-          }
+        }
       }
     }
 
@@ -4575,8 +4675,8 @@ function encode_fp_value5(flt) {
     }
     if (b) {}
     var h = p + 1024 + s + (i << 13 /* i * 8192 */); // brackets needed as + comes before <<   :-(
-    if (h >= 0xD800) {
-      throw new Error('fp decimal long float encoding: internal error: initial word beyond 0xD800');
+    if (h >= 0x8000) {
+      throw new Error('fp decimal long float encoding: internal error: initial word beyond 0x8000');
     }
     a = String.fromCharCode(h) + a;
     //dbg[0] = h;
@@ -4604,9 +4704,12 @@ function decode_fp_value5(s, opt) {
   //console.log('decode task: ', s, s.length, c0, '0x' + c0.toString(16));
 
   // As we expect most encodings to be regular numbers, those will be in 0x0000..0x7FFF and
-  // we don't want to spend the least amount of time in the 'special values' overhead,
+  // we do not want to spend any amount of time in the 'special values' overhead,
   // which would be added overhead if we did check for those *first* instead of *at the same time*
-  // as we do here by looking at the top nibble immediately:
+  // as we do here by looking at the top nibble immediately (Note: This ASSUMES your JS engine (Chrome V8?)
+  // is smart enough to convert this switch/case statement set into a jump table, just like any
+  // decent C-like language compiler would! It turns out not everyone out there is all that smart
+  // yet... Sigh...):
   // 
   // nibble value:
   // 0..7: regular 'long encoding' floating point values. Act as *implicit* NUM opcodes.
@@ -5229,6 +5332,20 @@ function encode_fp_init_encode_lookup_table() {}
 // import 'fpcvt-alt8.js';
 
 
+// helper functions
+function word2hex(i) {
+  return '0x' + ('0000' + i.toString(16)).substr(-4).toUpperCase();
+}
+
+function str2hexwords(str) {
+  var rv = [];
+  for (var i = 0, len = str.length; i < len; i++) {
+    var c = str.charCodeAt(i); // a.k.a.  c = str[i];
+    rv[i] = word2hex(c);
+  }
+  return '[' + rv.join(',') + ']';
+}
+
 var test_serialization = true;
 
 var data = [];
@@ -5322,7 +5439,9 @@ function init() {
   // test the ranges which are treated special plus a little *outside* those ranges to detect incorrect handling
   //debugger;
 
-  // also test the reserve to ensure we cover the entire *decodable* range as wll as the entire *encodable* range!
+  // also test the reverse to ensure we cover the entire *decodable* range as well as the entire *encodable* range
+  // for 'shorthand notation' floating point values a.k.a. 'decimal encoded flaoting point values' 
+  // (see also the documentation in the comments in the fpcvt.js source file)!
   //
   // Note the comment about 'holes' in fpcvt.js -- here we happen to test those holes alongside expected encoder outputs!
   for (var i = 0x8000; i < 0xF900; i++) {
@@ -5331,10 +5450,16 @@ function init() {
     var z = decode_fp_value(t);
     // and test if the *encoder* handles all these 'short notation' samples correctly:
     var s = encode_fp_value(z);
-    if (s !== t && i !== 0x8000) {}
+    if (s !== t && i !== 0x8000) {
+      var dm = i & 0x03FF; // 10 bits
+      var ds = i & 0x0400; // bit 10 = sign
+      var dp = i & 0x7800; // bits 11..14: exponent
+      dp >>>= 11;
+      dp -= 3 + 2;
+    }
     // ZERO has a special encoding so 0x8000 is a shorthand code which can NEVER OCCUR:
     // however, the *actual* encoding for ZERO (+0) is also a shorthand hence the actual ZERO must also have length =1:
-    if (s.length !== t.length) {}
+    else if (s.length !== t.length) {}
     data.push(z);
   }
   for (var i = -6; i <= 16; i++) {
