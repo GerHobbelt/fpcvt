@@ -12,6 +12,21 @@
 // import 'fpcvt-alt8.js';
 
 
+    // helper functions
+    function word2hex(i) {
+      return '0x' + ('0000' + i.toString(16)).substr(-4).toUpperCase();
+    }
+
+    function str2hexwords(str) {
+      var rv = [];
+      for (var i = 0, len = str.length; i < len; i++) {
+        var c = str.charCodeAt(i);      // a.k.a.  c = str[i];
+        rv[i] = word2hex(c);
+      }
+      return '[' + rv.join(',') + ']';
+    }
+
+
 
     const test_serialization = true;
 
@@ -106,9 +121,11 @@
       // test the ranges which are treated special plus a little *outside* those ranges to detect incorrect handling
       //debugger;
 
-      // also test the reserve to ensure we cover the entire *decodable* range as wll as the entire *encodable* range!
+      // also test the reverse to ensure we cover the entire *decodable* range as well as the entire *encodable* range
+      // for 'shorthand notation' floating point values a.k.a. 'decimal encoded flaoting point values' 
+      // (see also the documentation in the comments in the fpcvt.js source file)!
       //
-			// Note the comment about 'holes' in fpcvt.js -- here we happen to test those holes alongside expected encoder outputs!
+      // Note the comment about 'holes' in fpcvt.js -- here we happen to test those holes alongside expected encoder outputs!
       for (var i = 0x8000; i < 0xF900; i++) {
         if (i >= 0xD800 && i <= 0xDFFF) continue;
         var t = String.fromCharCode(i);
@@ -116,12 +133,17 @@
         // and test if the *encoder* handles all these 'short notation' samples correctly:
         var s = encode_fp_value(z);
         if (s !== t && i !== 0x8000) {
-          console.warn('custom enc mismatch for shorthand Unicode encoding: ', z, s, t, s.length, t.length);
+          var dm = i & 0x03FF;      // 10 bits
+          var ds = i & 0x0400;      // bit 10 = sign
+          var dp = i & 0x7800;      // bits 11..14: exponent
+          dp >>>= 11;
+          dp -= 3 + 2;
+          console.warn('custom enc VALUE mismatch for shorthand Unicode encoding: ', { word: word2hex(i), mantissa: dm, sign: ds, exp: dp, word_: t, decoded: z, re_enc_as_hex: str2hexwords(s), re_enc: s, re_enc_len: s.length, word_len: t.length }, s.length, t.length);
         }
         // ZERO has a special encoding so 0x8000 is a shorthand code which can NEVER OCCUR:
         // however, the *actual* encoding for ZERO (+0) is also a shorthand hence the actual ZERO must also have length =1:
-        if (s.length !== t.length) {
-          console.warn('custom enc mismatch for shorthand Unicode encoding: ', z, s, t, s.length, t.length);
+        else if (s.length !== t.length) {
+          console.warn('custom enc LENGTH mismatch for shorthand Unicode encoding: ', { word: word2hex(i), mantissa: dm, sign: ds, exp: dp, word_: t, decoded: z, re_enc_as_hex: str2hexwords(s), re_enc: s, re_enc_len: s.length, word_len: t.length });
         }
         data.push(z);
       }
@@ -430,58 +452,58 @@
     init();
 
 
-		// Custom : v0 ~ REFERENCE CHECKS
+    // Custom : v0 ~ REFERENCE CHECKS
     custom_0(data, data_length, serialized_data);
 
-		// Classic'
+    // Classic'
     classic_1(data, data_length, serialized_data);
 
-		// Custom : v1'
+    // Custom : v1'
     custom_1(data, data_length, serialized_data);
 
-		// Custom : v2'
+    // Custom : v2'
     custom_2(data, data_length, serialized_data);
 
-		// Custom : v3'
+    // Custom : v3'
     custom_3(data, data_length, serialized_data);
 
-		// Custom : v4'
+    // Custom : v4'
     custom_4(data, data_length, serialized_data);
 
-		// Custom : v5'
+    // Custom : v5'
     custom_5(data, data_length, serialized_data);
 
-		// Custom : v6'
+    // Custom : v6'
     custom_6(data, data_length, serialized_data);
 
-		// Custom : v7'
+    // Custom : v7'
     custom_7(data, data_length, serialized_data);
 
-		// Custom : v8'
+    // Custom : v8'
     custom_8(data, data_length, serialized_data);
 
-		// Custom : v9'
+    // Custom : v9'
     custom_9(data, data_length, serialized_data);
 
-		// Custom : v10'
+    // Custom : v10'
     custom_10(data, data_length, serialized_data);
 
-		// Custom : v11'
+    // Custom : v11'
     custom_11(data, data_length, serialized_data);
 
-		// Custom : v12'
+    // Custom : v12'
     custom_12(data, data_length, serialized_data);
 
-		// Custom : v13'
+    // Custom : v13'
     custom_13(data, data_length, serialized_data);
 
-		// Custom : v14'
+    // Custom : v14'
     custom_14(data, data_length, serialized_data);
 
-		// Custom : v15'
+    // Custom : v15'
     custom_15(data, data_length, serialized_data);
 
-		// Custom : v16'
+    // Custom : v16'
     custom_16(data, data_length, serialized_data);
 
 
